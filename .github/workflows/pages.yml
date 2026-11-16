@@ -1,7 +1,7 @@
 name: Publicar aplicación web
 on:
   push:
-    branches: [main]
+    branches: [main, claude/adoring-fermat-ptg1ro]
   workflow_dispatch:
 permissions:
   contents: read

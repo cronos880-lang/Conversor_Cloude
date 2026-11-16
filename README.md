@@ -68,7 +68,7 @@ Convierte por lotes en Node y vuelve a comprobar cada STEP con un Open CASCADE i
 
 ## Publicación
 
-Cada push a `main` ejecuta `.github/workflows/pages.yml`, que publica `index.html` y `static/` en GitHub Pages. Si GitHub no permite activarlo con el token de Actions, un administrador debe elegir **Settings → Pages → Source: GitHub Actions**.
+Cada push a `main` (o a la rama de pruebas) ejecuta `.github/workflows/pages.yml`, que publica `index.html` y `static/` en GitHub Pages. Si GitHub no permite activarlo con el token de Actions, un administrador debe elegir **Settings → Pages → Source: GitHub Actions**.
 
 ## Componentes de terceros
 
