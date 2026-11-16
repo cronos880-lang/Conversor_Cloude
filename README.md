@@ -1,34 +1,74 @@
-# Conversor 3D · STL → STEP
+# Conversor 3D · STL → STEP con superficies reales
 
-[Abrir el conversor en el navegador](https://cronos880-lang.github.io/Conversor_3D/) · [Estado del despliegue](https://github.com/cronos880-lang/Conversor_3D/actions/workflows/pages.yml)
+Versión derivada de [Conversor_3D](https://github.com/cronos880-lang/Conversor_3D). Mantiene la misma interfaz web y cambia por completo el motor de conversión: en lugar de crear una cara plana por cada triángulo, **reconoce las superficies de la pieza** (planos, cilindros, conos, esferas y toros) y escribe un STEP con esas caras, sus aristas (rectas, arcos y curvas) y sus vértices.
 
-El enlace público requiere que el despliegue de GitHub Pages termine correctamente. No se ha podido confirmar ese estado desde el entorno de desarrollo.
+Todo sigue ocurriendo en el navegador: sin instalaciones, sin cuentas y sin subir archivos a ningún servidor.
 
-Interfaz HTML y conversión CAD **íntegramente en el navegador**. Sin instalaciones, Python, cuentas adicionales ni subida de archivos a un servidor. Abre el enlace de GitHub Pages que aparece en **Deployments → github-pages** cuando el despliegue esté completado.
+## Uso
 
 1. Abre la web y selecciona tu STL.
 2. Gira arrastrando, acerca con la rueda y desplaza con el botón derecho.
-3. Selecciona las unidades y pulsa **Convertir y descargar STEP**.
+3. Elige las unidades y pulsa **Convertir y descargar STEP**.
 
-El motor CAD descarga unos 22 MB al convertir por primera vez. Los archivos permanecen en el navegador. Puedes cancelar una conversión.
+Al terminar, la web indica cuántas caras tiene el STEP y de qué tipo son. El motor CAD (22 MB) se descarga la primera vez que se convierte.
+
+## Qué hace la conversión
+
+1. **Lee y repara la malla**: suelda vértices casi coincidentes, resuelve uniones en T, tapa huecos pequeños y admite piezas con cavidades internas o con varios cuerpos.
+2. **Reconoce superficies**: agrupa los triángulos que pertenecen a un mismo plano, cilindro, cono, esfera o toro, con una tolerancia de 0,01 a 0,03 mm según el tamaño de la pieza para absorber el ruido habitual de los STL.
+3. **Construye el sólido**: cada grupo pasa a ser una cara; los bordes entre caras se convierten en rectas, arcos de circunferencia o curvas spline, y los vértices se llevan sobre las superficies ajustadas.
+4. **Valida el resultado** con Open CASCADE (WebAssembly): vuelve a abrir el STEP, comprueba que es un sólido cerrado y válido y que conserva volumen y área (margen del 2 %). Si alguna cara no supera la comprobación, se degrada solo esa zona: primero a contorno poligonal y, si hace falta, a caras planas. Nunca se descarga un STEP que no haya pasado la validación.
 
 ## Alcance real
 
-Genera sólidos B-rep STEP con Open CASCADE compilado a WebAssembly. Valida la malla, une caras coplanares, exporta STEP, vuelve a abrirlo y comprueba validez y volumen antes de descargar.
+- Funciona mejor con **piezas mecánicas** exportadas desde un programa CAD: taladros, ejes, chaflanes, redondeos sencillos.
+- **No reconstruye el historial paramétrico ni las cotas.** El STEP es un sólido con caras reales, no un diseño con operaciones.
+- Las **formas libres u orgánicas** (superficies esculpidas, perfiles spline, dentados, roscas) no se reconocen: esas zonas quedan con caras planas, igual que en una conversión facetada clásica.
+- Los radios y ejes salen del ajuste a la malla; pueden diferir en centésimas del diseño original.
+- La importación en Onshape no se ha podido comprobar desde el entorno de desarrollo; la validación se hace con Open CASCADE.
 
-**No reconstruye el historial paramétrico, las cotas ni las curvas originales.** Las superficies curvas conservan las facetas del STL. No se garantiza una conversión perfecta de cualquier malla ni se ha validado la importación en Onshape o Autodesk.
+Límites: 100 MB y 400.000 triángulos. El STL no declara unidades: elige las correctas. El STEP se exporta en milímetros.
 
-Límites: 20 MB, 20.000 triángulos; malla cerrada y con orientación coherente, sin caras degeneradas. Se rechazan componentes con cajas envolventes superpuestas, incluidas envolventes anidadas, para evitar rellenar cavidades por error. Esto puede rechazar algunas piezas válidas. Las comprobaciones no detectan necesariamente todas las autointersecciones. El STL no declara unidades: elige las correctas. El STEP se exporta en milímetros; el visor no altera las coordenadas.
+## Estructura
+
+| Ruta | Contenido |
+|---|---|
+| `index.html`, `static/app.js` | Interfaz y visor 3D (sin cambios de diseño respecto al original). |
+| `static/convert-worker.js` | Worker que ejecuta la conversión y la validación. |
+| `static/core/mesh.js` | Lectura de STL, soldadura, reparación y adyacencias. |
+| `static/core/fit.js` | Ajuste de cilindros, conos, esferas y toros. |
+| `static/core/segment.js` | Reconocimiento de superficies sobre la malla. |
+| `static/core/curves.js`, `brep.js` | Aristas, vértices y topología del sólido. |
+| `static/core/step.js` | Escritura del STEP (AP214). |
+| `static/core/validate.js`, `convert.js` | Validación con Open CASCADE y degradación de caras problemáticas. |
+| `tests/` | Pruebas del núcleo y del flujo real en navegador. |
+| `tools/` | Utilidades de desarrollo: conversión por lotes, diagnóstico e imágenes de la segmentación. |
+
+## Desarrollo y pruebas
+
+No hay compilación ni dependencias npm para ejecutar la aplicación. Sirve este directorio con cualquier servidor estático, por ejemplo `python -m http.server 8011`.
+
+```bash
+node tests/core_test.mjs
+```
+
+Prueba el núcleo con el motor WebAssembly real: caja, tubo, esfera, cavidad interna, varias piezas, unidades, reparación de huecos y rechazo de mallas no válidas.
+
+```bash
+node tests/browser_real.mjs carpeta_con_stl carpeta_salida
+```
+
+Convierte cada STL desde la página en un navegador (requiere Playwright y el servidor en el puerto 8011) y guarda los STEP descargados.
+
+```bash
+node tools/batch.mjs carpeta_con_stl carpeta_salida
+```
+
+Convierte por lotes en Node y vuelve a comprobar cada STEP con un Open CASCADE independiente (`pip install cadquery-ocp`).
 
 ## Publicación
 
-Cada push a `main` ejecuta `.github/workflows/pages.yml` para publicar `index.html` y `static/` en GitHub Pages. El workflow intenta habilitar Pages. Si GitHub no permite activarlo con el token de Actions, un administrador debe elegir **Settings → Pages → Source: GitHub Actions**. La disponibilidad de Pages para repositorios privados depende del plan de GitHub. Un archivo guardado en GitHub no es por sí solo una web publicada; el enlace solo funciona tras un despliegue correcto.
-
-## Desarrollo
-
-No hay compilación ni dependencias npm para ejecutar la aplicación. Sirve este directorio con cualquier servidor HTTP estático; por ejemplo, `python -m http.server 8010`. Abrir el HTML mediante `file://` no permite cargar los módulos y el motor WebAssembly.
-
-Las pruebas de navegador están en `tests/`. Se verificaron 11 casos del motor WebAssembly: caja, cilindro, esfera, varias piezas, toro, unidades en centímetros y pulgadas, repetición, y rechazo de malla abierta, envolventes anidadas y datos inválidos. Los STEP se reimportan con Open CASCADE independiente y se comprueba volumen y validez. Requieren herramientas de desarrollo; no son necesarias para usar la web. El motor se ejecuta en un Worker independiente que se destruye al terminar o cancelar para liberar memoria.
+Cada push a `main` ejecuta `.github/workflows/pages.yml`, que publica `index.html` y `static/` en GitHub Pages. Si GitHub no permite activarlo con el token de Actions, un administrador debe elegir **Settings → Pages → Source: GitHub Actions**.
 
 ## Componentes de terceros
 

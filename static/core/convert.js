@@ -45,7 +45,7 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
   const state = prepare(positions, scale, onStatus);
   const { mesh, seg } = state;
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
-  for (; rounds < 6; rounds++) {
+  for (; rounds < 7; rounds++) {
     onStatus(rounds ? `Corrigiendo caras problemáticas (intento ${rounds})…` : 'Construyendo el sólido…');
     const t0 = performance.now();
     const out = build(state, name, polyFaces);
@@ -62,12 +62,23 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
     // Caras a degradar: las señaladas o, si el fallo es global, todas las que aún no son facetas.
     let bad = [...check.bad];
     if (!bad.length) bad = seg.prims.map((p, i) => i).filter(i => !(polyFaces.has(i) && seg.prims[i].facet));
-    const toDemote = new Set(); let progress = false;
+    const toDemote = new Set(); let progress = false, neighbours = null;
     for (const r of bad) {
       const gross = check.gross && check.gross.has(r) && !seg.prims[r].facet && seg.prims[r].S.type !== 'plane';
       if (gross) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
       else if (!polyFaces.has(r)) { polyFaces.add(r); progress = true; }                  // 1.º contorno poligonal
       else if (!seg.prims[r].facet) toDemote.add(r);   // 2.º facetas planas
+      else {
+        // Una faceta que sigue fallando: degradar las caras vecinas que aún no son facetas.
+        if (!neighbours) {
+          neighbours = new Map();
+          for (let h = 0; h < mesh.nt * 3; h++) {
+            const a = seg.reg[(h / 3) | 0], b = seg.reg[(mesh.adj[h] / 3) | 0];
+            if (a !== b) (neighbours.get(a) || neighbours.set(a, new Set()).get(a)).add(b);
+          }
+        }
+        for (const q of neighbours.get(r) || []) if (!seg.prims[q].facet) { if (!polyFaces.has(q)) polyFaces.add(q); else toDemote.add(q); progress = true; }
+      }
     }
     if (toDemote.size) {
       progress = true; demoted += demote(mesh, seg, toDemote); absorbSlivers(mesh, seg);
@@ -78,8 +89,8 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
   if (!good) {
     // Último recurso: todo el sólido con facetas planas (como una conversión facetada clásica).
     onStatus('Usando caras planas en toda la pieza…');
-    const all = new Set(); seg.prims.forEach((p, i) => { if (!p.facet) all.add(i); });
-    demoted += demote(mesh, seg, all); absorbSlivers(mesh, seg);
+    const all = new Set(seg.prims.map((p, i) => i));
+    demoted += demote(mesh, seg, all);
     const every = new Set(seg.prims.map((p, i) => i));
     const out = build(state, name, every);
     const regionArea = new Float64Array(seg.prims.length);

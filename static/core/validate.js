@@ -68,7 +68,7 @@ export function validate(oc, stepText, brep, regionArea) {
         let diff = Infinity;
         for (const [i, c] of votes) if (c === score) { const d = Math.abs(regionArea[brep.faces[i].region] - area) + (seen[i] ? 1e30 : 0); if (d < diff) { diff = d; best = i; } }
       }
-      if (best < 0 || score < nv / 2) { unmatched.push({ ok, area }); continue; }
+      if (best < 0) { unmatched.push({ ok, area }); continue; }
       faceRegion[index] = brep.faces[best].region;
       seen[best] = 1; got[best] += area;
       if (!ok) result.bad.add(brep.faces[best].region);
