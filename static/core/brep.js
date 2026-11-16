@@ -28,7 +28,9 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   // 1) Topología: cadenas de aristas de malla entre esquinas.
   const chains = [], chainOf = new Map(); // primera semiarista -> { edge, forward }
   const cornerRegions = new Map();
-  const touch = (v, r) => { let s = cornerRegions.get(v); if (!s) cornerRegions.set(v, s = new Set()); s.add(r); };
+  const compOfRegion = new Int32Array(prims.length);
+  for (let t = 0; t < nt; t++) compOfRegion[reg[t]] = comp.comp[t];
+  const touch = (v0, r) => { const v = v0 + compOfRegion[r] * mesh.nv; let s = cornerRegions.get(v); if (!s) cornerRegions.set(v, s = new Set()); s.add(r); };
   for (let h0 = 0; h0 < nt * 3; h0++) {
     if (visited[h0] || !boundary(h0)) continue;
     const A = regOf(h0), loop = [];
@@ -65,11 +67,11 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   // 2) Geometría: vértices y puntos intermedios llevados sobre las superficies ajustadas.
   const maxMove = 4 * tol;
   const vertices = [], vertexId = new Map();
-  const vertexOf = v => {
-    let id = vertexId.get(v);
+  const vertexOf = (v0, shell) => {
+    const v = v0 + shell * mesh.nv; let id = vertexId.get(v);
     if (id === undefined) {
       id = vertices.length; vertexId.set(v, id);
-      vertices.push(snapPoint(P(v), [...cornerRegions.get(v)].map(r => prims[r].S), maxMove));
+      vertices.push(snapPoint(P(v0), [...cornerRegions.get(v)].map(r => prims[r].S), maxMove));
     }
     return id;
   };
@@ -77,7 +79,7 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   const same = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-9;
   const chainEdges = chains.map(({ vs, A, B }) => {
     const SA = prims[A].S, SB = prims[B].S, closed = vs[0] === vs[vs.length - 1];
-    const v0 = vertexOf(vs[0]), v1 = vertexOf(vs[vs.length - 1]);
+    const v0 = vertexOf(vs[0], compOfRegion[A]), v1 = vertexOf(vs[vs.length - 1], compOfRegion[A]);
     let pts = vs.map((v, i) => {
       if (i === 0) return vertices[v0];
       if (i === vs.length - 1) return vertices[v1];

@@ -29,6 +29,18 @@ export function validate(oc, stepText, brep, regionArea) {
       const k = key(brep.vertices[v]); let set = vertexFaces.get(k); if (!set) vertexFaces.set(k, set = new Set()); set.add(i);
     } });
     const got = new Float64Array(brep.faces.length), seen = new Uint8Array(brep.faces.length);
+    // Aristas libres: las que solo usa una cara indican que la envolvente no cierra.
+    const edgeUse = new Map(); // hash -> [{ edge, count, faces }]
+    const useEdge = (edge, faceIndex) => {
+      if (oc.BRep_Tool.Degenerated(oc.TopoDS.Edge(edge))) return;
+      const ends = []; const ev = new oc.TopExp_Explorer(edge, E.TopAbs_VERTEX, E.TopAbs_SHAPE);
+      for (; ev.More(); ev.Next()) { const p = oc.BRep_Tool.Pnt(oc.TopoDS.Vertex(ev.Current())); ends.push(key([p.X(), p.Y(), p.Z()])); p.delete(); }
+      ev.delete();
+      const h = ends.sort().join('|'); let list = edgeUse.get(h); if (!list) edgeUse.set(h, list = []);
+      for (const item of list) if (item.edge.IsSame(edge)) { item.count++; item.faces.add(faceIndex); return; }
+      list.push({ edge, count: 1, faces: new Set([faceIndex]) });
+    };
+    const faceRegion = [];
     const ex = new oc.TopExp_Explorer(shape, E.TopAbs_FACE, E.TopAbs_SHAPE);
     let index = 0; const unmatched = [];
     for (; ex.More(); ex.Next(), index++) {
@@ -36,6 +48,9 @@ export function validate(oc, stepText, brep, regionArea) {
       const g = new oc.GProp_GProps(); oc.BRepGProp.SurfaceProperties(face, g, false, false);
       const area = g.Mass(); g.delete();
       const fc = new oc.BRepCheck_Analyzer(face, true, false, false), ok = fc.IsValid(); fc.delete();
+      const ee = new oc.TopExp_Explorer(face, E.TopAbs_EDGE, E.TopAbs_SHAPE);
+      for (; ee.More(); ee.Next()) useEdge(ee.Current(), index);
+      ee.delete();
       const votes = new Map(); let nv = 0;
       const vx = new oc.TopExp_Explorer(face, E.TopAbs_VERTEX, E.TopAbs_SHAPE);
       for (; vx.More(); vx.Next()) {
@@ -52,12 +67,18 @@ export function validate(oc, stepText, brep, regionArea) {
         for (const [i, c] of votes) if (c === score) { const d = Math.abs(regionArea[brep.faces[i].region] - area); if (d < diff) { diff = d; best = i; } }
       }
       if (best < 0 || score < nv / 2) { unmatched.push({ ok, area }); continue; }
+      faceRegion[index] = brep.faces[best].region;
       seen[best] = 1; got[best] += area;
       if (!ok) result.bad.add(brep.faces[best].region);
     }
     shape.delete();
     ex.delete();
-    result.faces = index;
+    result.faces = index; result.free = 0;
+    for (const list of edgeUse.values()) for (const item of list) if (item.count === 1) {
+      result.free++;
+      for (const f of item.faces) if (faceRegion[f] !== undefined) result.bad.add(faceRegion[f]);
+    }
+    if (result.free) result.valid = false;
     // Área por región (las dos mitades de una esfera o toro completos comparten región).
     let total = 0; for (const a of regionArea) total += a;
     const slack = 3e-5 * total + 0.02;

@@ -44,7 +44,7 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
   const state = prepare(positions, scale, onStatus);
   const { mesh, seg } = state;
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
-  for (; rounds < 8; rounds++) {
+  for (; rounds < 6; rounds++) {
     onStatus(rounds ? `Corrigiendo caras problemáticas (intento ${rounds})…` : 'Construyendo el sólido…');
     const out = build(state, name, polyFaces);
     const regionArea = new Float64Array(seg.prims.length);
@@ -54,16 +54,16 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
     const volumeOk = Math.abs(check.volume - mesh.volume) <= 0.02 * Math.abs(mesh.volume);
     const areaOk = Math.abs(check.area - mesh.area) <= 0.02 * mesh.area;
     const solid = check.valid && volumeOk && areaOk;
-    if (trace) trace({ round: rounds, valid: check.valid, readable: check.readable, faces: check.faces, mine: out.report.faces, unmatched: check.unmatched, bad: [...check.bad].slice(0, 12), nbad: check.bad.size, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), error: check.error, why: (check.why || []).slice(0, 6).map(w => w.concat(seg.prims[w[0]].S.type)) });
+    if (trace) trace({ round: rounds, valid: check.valid, readable: check.readable, faces: check.faces, mine: out.report.faces, unmatched: check.unmatched, free: check.free, bad: [...check.bad].slice(0, 12), nbad: check.bad.size, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), error: check.error, why: (check.why || []).slice(0, 6).map(w => w.concat(seg.prims[w[0]].S.type)) });
     if (solid && (!good || check.bad.size <= good.check.bad.size)) good = { ...out, check, rounds };
     if (solid && !check.bad.size) break;
     // Caras a degradar: las señaladas o, si el fallo es global, todas las que aún no son facetas.
     let bad = [...check.bad];
-    if (!bad.length) bad = seg.prims.map((p, i) => i).filter(i => !(polyFaces.has(i) && (seg.prims[i].facet || seg.prims[i].S.type === 'plane')));
+    if (!bad.length) bad = seg.prims.map((p, i) => i).filter(i => !(polyFaces.has(i) && seg.prims[i].facet));
     const toDemote = new Set(); let progress = false;
     for (const r of bad) {
       if (!polyFaces.has(r)) { polyFaces.add(r); progress = true; }                       // 1.º contorno poligonal
-      else if (!seg.prims[r].facet && seg.prims[r].S.type !== 'plane') toDemote.add(r);   // 2.º facetas planas
+      else if (!seg.prims[r].facet) toDemote.add(r);   // 2.º facetas planas
     }
     if (toDemote.size) {
       progress = true; demoted += demote(mesh, seg, toDemote);
@@ -87,6 +87,7 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
   if (!good) throw new Error('No se pudo obtener un sólido válido a partir de este STL.');
   const last = good; rounds = good.rounds;
   last.report.rounds = rounds; last.report.demoted = demoted;
+  if (mesh.repairs) last.report.repairs = mesh.repairs;
   last.report.checkedVolume = last.check.volume;
   return { ...last, ...state };
 }
