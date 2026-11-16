@@ -31,10 +31,24 @@ function circleFit(pts, closed, tol) {
   const n = closed ? pts.length - 1 : pts.length;
   if (n < 3) return null;
   const P = pts.slice(0, n), plane = fitPlane(P);
-  const e1 = perp(plane.n), e2 = cross(plane.n, e1);
-  for (const p of P) if (Math.abs(dot(plane.n, p) - plane.d) > tol) return null;
-  const q = P.map(p => { const v = sub(p, plane.o); return [dot(v, e1), dot(v, e2)]; });
-  const c = fitCircle2D(q); if (!c) return null;
+  let nrm = plane.n;
+  const first = pts[0], last = pts[pts.length - 1];
+  let chord = null;
+  if (!closed) {
+    // El plano de la circunferencia debe contener la cuerda entre los extremos.
+    const d = sub(last, first), len = norm(d); if (!(len > 0)) return null;
+    chord = mul(d, 1 / len);
+    nrm = sub(nrm, mul(chord, dot(nrm, chord)));
+    if (norm(nrm) < 0.5) return null;
+    nrm = unit(nrm);
+  }
+  const o = closed ? plane.o : first;
+  const e1 = closed ? perp(nrm) : chord, e2 = cross(nrm, e1);
+  for (const p of P) if (Math.abs(dot(nrm, sub(p, o))) > tol) return null;
+  const q = P.map(p => { const v = sub(p, o); return [dot(v, e1), dot(v, e2)]; });
+  let c = fitCircle2D(q); if (!c) return null;
+  if (closed) c = [c[0], c[1], Math.hypot(q[0][0] - c[0], q[0][1] - c[1])];
+  else { const half = q[n - 1][0] / 2; c = [half, c[1], Math.hypot(half, c[1])]; }
   for (const [x, y] of q) if (Math.abs(Math.hypot(x - c[0], y - c[1]) - c[2]) > tol) return null;
   // Sentido de giro y monotonía angular.
   const ang = q.map(([x, y]) => Math.atan2(y - c[1], x - c[0]));
@@ -48,10 +62,10 @@ function circleFit(pts, closed, tol) {
     total += d;
   }
   if (closed && Math.abs(Math.abs(total) - 2 * Math.PI) > 1e-6) return null;
-  if (!closed && Math.abs(total) >= 2 * Math.PI) return null;
-  const axis = sign > 0 ? plane.n : mul(plane.n, -1);
-  const center = add(plane.o, add(mul(e1, c[0]), mul(e2, c[1])));
-  return { type: 'circle', c: center, a: axis, x: unit(sub(pts[0], add(center, mul(axis, dot(sub(pts[0], center), axis))))), r: c[2], sweep: Math.abs(total) };
+  if (!closed && Math.abs(total) >= 2 * Math.PI - 1e-9) return null;
+  const axis = sign > 0 ? nrm : mul(nrm, -1);
+  const center = add(o, add(mul(e1, c[0]), mul(e2, c[1])));
+  return { type: 'circle', c: center, a: axis, x: unit(sub(first, center)), r: c[2], sweep: Math.abs(total) };
 }
 
 /** Punto de una curva analítica en el parámetro angular t (para muestrear). */
@@ -111,9 +125,28 @@ function splineMid(C, i) {
   return [0, 1, 2].map(k => (a[k] + 3 * b[k] + 3 * c[k] + d[k]) / 8);
 }
 
+/** Lleva p al punto más cercano común a varias superficies (mínimos cuadrados). */
+export function snapPoint(p, surfaces, maxMove) {
+  let x = p;
+  for (let it = 0; it < 12; it++) {
+    const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], g = [0, 0, 0]; let err = 0;
+    for (const S of surfaces) {
+      const d = dist(S, x), n = normalAt(S, x); err = Math.max(err, Math.abs(d));
+      for (let i = 0; i < 3; i++) { g[i] -= n[i] * d; for (let j = 0; j < 3; j++) M[i][j] += n[i] * n[j]; }
+    }
+    if (err < 1e-13) break;
+    for (let i = 0; i < 3; i++) M[i][i] += 1e-9 * surfaces.length;
+    const step = solve(M, g); if (!step) break;
+    x = add(x, step);
+  }
+  if (!x.every(Number.isFinite) || norm(sub(x, p)) > maxMove) return p;
+  return x;
+}
+
 /**
- * Curva para una cadena de puntos entre las superficies A y B.
- * Devuelve la curva y `dev`, la desviación máxima medida respecto a ambas superficies.
+ * Curva para una cadena de puntos entre las superficies A y B. Los extremos se
+ * respetan exactamente. Devuelve la curva y `dev`, la desviación máxima medida
+ * respecto a ambas superficies.
  */
 export function fitCurve(pts, closed, A, B, tol) {
   const onBoth = p => Math.max(Math.abs(dist(A, p)), Math.abs(dist(B, p)));
@@ -129,18 +162,30 @@ export function fitCurve(pts, closed, A, B, tol) {
   curve = circleFit(pts, closed, tol);
   if (curve) {
     dev = 0;
-    const y = cross(curve.a, curve.x), n = pts.length;
-    for (let i = 0; i + 1 < n; i++) {
+    for (let i = 0; i + 1 < pts.length; i++) {
       const m = sub(mul(add(pts[i], pts[i + 1]), 0.5), curve.c);
       const dir = unit(sub(m, mul(curve.a, dot(m, curve.a))));
-      // Punto medio del arco entre dos vértices consecutivos (el arco menor de cada tramo).
       dev = Math.max(dev, onBoth(add(curve.c, mul(dir, curve.r))));
-      void y;
     }
     if (dev <= 4 * tol) return { curve, dev };
   }
-  curve = splineFit(pts, closed, A, B);
-  dev = 0;
-  for (let i = 0; i + 1 < pts.length; i++) dev = Math.max(dev, onBoth(splineMid(curve, i)));
+  // Spline por los puntos; si se separa de las superficies, densificar con puntos de la intersección.
+  let P = pts;
+  for (let round = 0; ; round++) {
+    curve = splineFit(P, closed, A, B);
+    dev = 0; const mids = [];
+    for (let i = 0; i + 1 < P.length; i++) { const m = splineMid(curve, i); mids.push(m); dev = Math.max(dev, onBoth(m)); }
+    if (dev < 1e-5 || round === 3 || P.length > 1500) break;
+    const next = [P[0]]; let moved = false;
+    for (let i = 0; i + 1 < P.length; i++) {
+      if (onBoth(mids[i]) > 1e-5) {
+        const q = toIntersection(mids[i], A, B);
+        if (onBoth(q) < 1e-7 && norm(sub(q, mids[i])) < 0.3 * norm(sub(P[i + 1], P[i]))) { next.push(q); moved = true; }
+      }
+      next.push(P[i + 1]);
+    }
+    if (!moved) break;
+    P = next;
+  }
   return { curve, dev };
 }

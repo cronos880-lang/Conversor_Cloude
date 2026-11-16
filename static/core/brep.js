@@ -1,5 +1,6 @@
 // Topología B-rep a partir de la segmentación: caras, bucles, aristas y vértices.
-import { fitCurve } from './curves.js';
+import { fitCurve, snapPoint, toIntersection } from './curves.js';
+import { dist, normalAt, cross as crossV, norm as normV } from './fit.js';
 import { perp, cross, add, mul } from './fit.js';
 
 /**
@@ -21,12 +22,12 @@ export function buildBrep(mesh, seg, comp) {
   const count = new Int32Array(mesh.nv);
   for (let h = 0; h < nt * 3; h++) if (boundary(h)) count[T[h]]++;
 
-  const vertices = [], vertexId = new Map();
-  const vertexOf = v => { let id = vertexId.get(v); if (id === undefined) { id = vertices.length; vertexId.set(v, id); vertices.push(P(v)); } return id; };
-  const edges = [], chainOf = new Map(); // primera semiarista -> { edge, forward }
-  const faces = prims.map((p, i) => ({ S: p.S, sign: p.sign, loops: [], shell: -1, region: i }));
   const visited = new Uint8Array(nt * 3);
-
+  const faces = prims.map((p, i) => ({ S: p.S, sign: p.sign, loops: [], shell: -1, region: i }));
+  // 1) Topología: cadenas de aristas de malla entre esquinas.
+  const chains = [], chainOf = new Map(); // primera semiarista -> { edge, forward }
+  const cornerRegions = new Map();
+  const touch = (v, r) => { let s = cornerRegions.get(v); if (!s) cornerRegions.set(v, s = new Set()); s.add(r); };
   for (let h0 = 0; h0 < nt * 3; h0++) {
     if (visited[h0] || !boundary(h0)) continue;
     const A = regOf(h0), loop = [];
@@ -40,8 +41,7 @@ export function buildBrep(mesh, seg, comp) {
     // Girar el bucle para empezar en una esquina (o en el vértice de menor índice).
     let start = -1;
     for (let i = 0; i < loop.length; i++) if (count[T[loop[i]]] !== 2) { start = i; break; }
-    const closedChain = start < 0;
-    if (closedChain) { start = 0; for (let i = 1; i < loop.length; i++) if (T[loop[i]] < T[loop[start]]) start = i; }
+    if (start < 0) { start = 0; for (let i = 1; i < loop.length; i++) if (T[loop[i]] < T[loop[start]]) start = i; }
     const rot = loop.slice(start).concat(loop.slice(0, start));
     const refs = [];
     for (let i = 0; i < rot.length;) {
@@ -52,10 +52,8 @@ export function buildBrep(mesh, seg, comp) {
       if (!ref) {
         const B = regOf(adj[first]);
         const vs = chain.map(x => T[x]); vs.push(T[next(chain[chain.length - 1])]);
-        const pts = vs.map(P), closed = vs[0] === vs[vs.length - 1];
-        const { curve, dev } = fitCurve(pts, closed, prims[A].S, prims[B].S, tol);
-        const id = edges.length;
-        edges.push({ v0: vertexOf(vs[0]), v1: vertexOf(vs[vs.length - 1]), curve, dev, n: pts.length });
+        const id = chains.length; chains.push({ vs, A, B });
+        touch(vs[0], A); touch(vs[0], B); touch(vs[vs.length - 1], A); touch(vs[vs.length - 1], B);
         ref = { edge: id, forward: true };
         chainOf.set(adj[chain[chain.length - 1]], { edge: id, forward: false });
       }
@@ -63,6 +61,33 @@ export function buildBrep(mesh, seg, comp) {
     }
     faces[A].loops.push(refs);
   }
+  // 2) Geometría: vértices y puntos intermedios llevados sobre las superficies ajustadas.
+  const maxMove = 4 * tol;
+  const vertices = [], vertexId = new Map();
+  const vertexOf = v => {
+    let id = vertexId.get(v);
+    if (id === undefined) {
+      id = vertices.length; vertexId.set(v, id);
+      vertices.push(snapPoint(P(v), [...cornerRegions.get(v)].map(r => prims[r].S), maxMove));
+    }
+    return id;
+  };
+  const edges = chains.map(({ vs, A, B }) => {
+    const SA = prims[A].S, SB = prims[B].S, closed = vs[0] === vs[vs.length - 1];
+    const v0 = vertexOf(vs[0]), v1 = vertexOf(vs[vs.length - 1]);
+    const pts = vs.map((v, i) => {
+      if (i === 0) return vertices[v0];
+      if (i === vs.length - 1) return vertices[v1];
+      const p = P(v);
+      // Intersección transversal: el punto exacto común; tangente: punto intermedio.
+      const transversal = normV(crossV(normalAt(SA, p), normalAt(SB, p))) > 0.12;
+      const q = transversal ? toIntersection(p, SA, SB) : snapPoint(p, [SA, SB], maxMove);
+      return q.every(Number.isFinite) && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= maxMove ? q : p;
+    });
+    const { curve, dev } = fitCurve(pts, closed, SA, SB, tol);
+    return { v0, v1, curve, dev, n: pts.length };
+  });
+  void dist;
 
   // Envolventes: una por componente conexa de la malla.
   const shells = [];
