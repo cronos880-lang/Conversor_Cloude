@@ -123,49 +123,73 @@ const fromVec = {
 };
 const isDir = { sphere: [], cylinder: [3, 4, 5], cone: [3, 4, 5, 6], torus: [3, 4, 5] };
 
+/** Residuos (distancias con signo) de los puntos planos Q a la superficie de parámetros x. */
+function residuals(type, x, Q, out) {
+  const m = out.length;
+  if (type === 'sphere') {
+    const r = Math.abs(x[3]);
+    for (let i = 0; i < m; i++) out[i] = Math.hypot(Q[i * 3] - x[0], Q[i * 3 + 1] - x[1], Q[i * 3 + 2] - x[2]) - r;
+    return;
+  }
+  const l = Math.hypot(x[3], x[4], x[5]) || 1, ax = x[3] / l, ay = x[4] / l, az = x[5] / l;
+  const ca = type === 'cone' ? Math.cos(x[6]) : 0, sa = type === 'cone' ? Math.sin(x[6]) : 0;
+  const r6 = Math.abs(x[6]), r7 = type === 'torus' ? Math.abs(x[7]) : 0;
+  for (let i = 0; i < m; i++) {
+    const vx = Q[i * 3] - x[0], vy = Q[i * 3 + 1] - x[1], vz = Q[i * 3 + 2] - x[2];
+    const h = vx * ax + vy * ay + vz * az, rho = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - h * h));
+    out[i] = type === 'cylinder' ? rho - r6 : type === 'cone' ? rho * ca - h * sa : Math.hypot(rho - r6, h) - r7;
+  }
+}
+
 /** Refinamiento Levenberg–Marquardt de una primitiva sobre los puntos P. */
 export function refine(S0, P, scale, iterations = 25) {
   const type = S0.type; if (type === 'plane') return S0;
-  const centroid = [0, 0, 0];
-  for (const p of P) { centroid[0] += p[0] / P.length; centroid[1] += p[1] / P.length; centroid[2] += p[2] / P.length; }
-  const make = v => fromVec[type](v, centroid);
-  const cost = S => { let s = 0; for (const p of P) { const d = dist(S, p); s += d * d; } return s; };
-  let S = make(toVec[type](S0)), x = toVec[type](S), c = cost(S), lambda = 1e-3;
+  const m = P.length, Q = new Float64Array(m * 3), centroid = [0, 0, 0];
+  for (let i = 0; i < m; i++) for (let j = 0; j < 3; j++) { Q[i * 3 + j] = P[i][j]; centroid[j] += P[i][j] / m; }
+  let x = toVec[type](S0);
   const n = x.length, dirs = isDir[type];
-  for (let it = 0; it < iterations; it++) {
-    const r0 = P.map(p => dist(S, p));
-    const J = [];
+  let r0 = new Float64Array(m), r1 = new Float64Array(m);
+  const rp = new Float64Array(m), rm = new Float64Array(m), J = []; for (let k = 0; k < n; k++) J.push(new Float64Array(m));
+  const sq = r => { let s = 0; for (let i = 0; i < m; i++) s += r[i] * r[i]; return s; };
+  residuals(type, x, Q, r0);
+  let c = sq(r0), lambda = 1e-3;
+  const floor = m * (1e-10 * scale) ** 2;
+  for (let it = 0; it < iterations && c > floor; it++) {
     for (let k = 0; k < n; k++) {
-      const h = dirs.includes(k) ? 1e-6 : 1e-6 * scale;
-      const xp = x.slice(); xp[k] += h; const xm = x.slice(); xm[k] -= h;
-      const Sp = make(xp), Sm = make(xm);
-      J.push(P.map(p => (dist(Sp, p) - dist(Sm, p)) / (2 * h)));
+      const h = dirs.includes(k) ? 1e-6 : 1e-6 * scale, keep = x[k];
+      x[k] = keep + h; residuals(type, x, Q, rp);
+      x[k] = keep - h; residuals(type, x, Q, rm);
+      x[k] = keep;
+      const Jk = J[k], f = 1 / (2 * h);
+      for (let i = 0; i < m; i++) Jk[i] = (rp[i] - rm[i]) * f;
     }
     const JTJ = [], g = [];
     for (let i = 0; i < n; i++) {
-      JTJ.push(new Array(n)); let gi = 0;
-      for (let m = 0; m < P.length; m++) gi += J[i][m] * r0[m];
+      JTJ.push(new Array(n)); let gi = 0; const Ji = J[i];
+      for (let q = 0; q < m; q++) gi += Ji[q] * r0[q];
       g.push(-gi);
-      for (let j = 0; j <= i; j++) { let s = 0; for (let m = 0; m < P.length; m++) s += J[i][m] * J[j][m]; JTJ[i][j] = s; }
+      for (let j = 0; j <= i; j++) { let t = 0; const Jj = J[j]; for (let q = 0; q < m; q++) t += Ji[q] * Jj[q]; JTJ[i][j] = t; }
     }
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) JTJ[i][j] = JTJ[j][i];
-    let improved = false;
+    let improved = false, done = false;
     for (let tries = 0; tries < 8; tries++) {
       const M = JTJ.map((row, i) => row.map((v, j) => (i === j ? v * (1 + lambda) + 1e-12 * lambda : v)));
       const step = solve(M, g.slice());
       if (step) {
-        const xn = x.map((v, i) => v + step[i]), Sn = make(xn), cn = cost(Sn);
+        const xn = x.map((v, i) => v + step[i]);
+        residuals(type, xn, Q, r1);
+        const cn = sq(r1);
         if (cn < c) {
-          const rel = (c - cn) / (c || 1);
-          S = Sn; x = toVec[type](Sn); c = cn; lambda = Math.max(lambda / 10, 1e-12); improved = true;
-          if (rel < 1e-10) it = iterations;
+          done = (c - cn) / (c || 1) < 1e-10;
+          x = xn; c = cn; [r0, r1] = [r1, r0]; lambda = Math.max(lambda / 10, 1e-12); improved = true;
           break;
         }
       }
       lambda *= 10;
     }
-    if (!improved) break;
+    if (!improved || done) break;
   }
+  let S = fromVec[type](x, centroid);
   if (type === 'cone') S = normalizeCone(S, P);
   return S;
 }
@@ -297,3 +321,21 @@ export function fitPlane(P) {
 }
 
 export const DOF = { plane: 3, cylinder: 5, cone: 6, sphere: 4, torus: 7 };
+
+/** Cono a partir de las normales: todas forman el mismo ángulo con el eje. */
+export function fitConeFromNormals(P, Nrm, C) {
+  const n = Nrm.length; if (n < 4) return null;
+  const mean = [0, 0, 0]; for (const v of Nrm) { mean[0] += v[0] / n; mean[1] += v[1] / n; mean[2] += v[2] / n; }
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], Q = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+  for (let k = 0; k < n; k++) {
+    const v = sub(Nrm[k], mean), nn = Nrm[k], d = dot(nn, C[k]);
+    for (let i = 0; i < 3; i++) { b[i] += nn[i] * d; for (let j = 0; j < 3; j++) { M[i][j] += v[i] * v[j]; Q[i][j] += nn[i] * nn[j]; } }
+  }
+  let a = eigSym3(M).vectors[0];
+  const apex = solve(Q, b); if (!apex) return null;
+  let sh = 0, sr = 0;
+  for (const p of P) { const v = sub(p, apex), h = dot(v, a); sh += h; sr += Math.sqrt(Math.max(0, dot(v, v) - h * h)); }
+  if (sh < 0) { a = mul(a, -1); sh = -sh; }
+  if (!(sh > 0) || !(sr > 0)) return null;
+  return { type: 'cone', apex, a, alpha: Math.atan2(sr, sh) };
+}
