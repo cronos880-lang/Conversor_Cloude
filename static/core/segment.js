@@ -180,6 +180,9 @@ export function segment(mesh, options = {}) {
     const pts = vertsOf(tris);
     if (pts.length < DOF[S.type] + 3) return false;
     const big = mesh.diag * 100;
+    // Una región plana dentro de la tolerancia no es una superficie curva.
+    const flat = fitPlane(pts);
+    if (pts.every(p => Math.abs(dot(flat.n, p) - flat.d) <= tol * 1.5)) return false;
     if (S.type === 'sphere' || S.type === 'torus') {
       // Exigir vértices interiores: una sola banda de triángulos es indistinguible de un cono.
       const count = new Map(); let interior = 0;
@@ -360,5 +363,60 @@ export function segment(mesh, options = {}) {
     prims.push({ S, sign: 1, res: residual(S, pts) });
     for (const t of f.tris) reg[t] = id;
   }
+  absorbSlivers();
   return { reg, prims, tol };
+
+  /** Las regiones formadas solo por triángulos sin anchura se unen a la región vecina. */
+  function absorbSlivers() {
+    const tris = prims.map(() => []);
+    for (let t = 0; t < nt; t++) tris[reg[t]].push(t);
+    for (let r = 0; r < prims.length; r++) {
+      if (!tris[r].length || !tris[r].every(t => sliver(t, tol))) continue;
+      const share = new Map();
+      for (const t of tris[r]) for (let k = 0; k < 3; k++) {
+        const u = nbr(t, k); if (u < 0 || reg[u] === r) continue;
+        const a = T[t * 3 + k] * 3, b = T[t * 3 + (k + 1) % 3] * 3;
+        share.set(reg[u], (share.get(reg[u]) || 0) + Math.hypot(V[a] - V[b], V[a + 1] - V[b + 1], V[a + 2] - V[b + 2]));
+      }
+      let best = -1, len = 0;
+      for (const [q, l] of share) if (l > len) { len = l; best = q; }
+      if (best < 0) continue;
+      for (const t of tris[r]) { reg[t] = best; tris[best].push(t); }
+      tris[r] = [];
+    }
+  }
+}
+
+/**
+ * Sustituye las regiones indicadas por facetas planas (una por grupo de
+ * triángulos coplanarios). Modifica `seg` y devuelve cuántas regiones cambió.
+ */
+export function demote(mesh, seg, regions) {
+  const { V, T, N, A, adj, nt } = mesh, { reg, prims } = seg;
+  const eps = Math.max(mesh.diag * 1e-6, 1e-7);
+  const pending = new Uint8Array(nt); let n = 0;
+  for (let t = 0; t < nt; t++) if (regions.has(reg[t])) { pending[t] = 1; n++; }
+  if (!n) return 0;
+  const order = []; for (let t = 0; t < nt; t++) if (pending[t]) order.push(t);
+  order.sort((a, b) => A[b] - A[a]);
+  const stack = [];
+  for (const s of order) {
+    if (!pending[s]) continue;
+    const nx = N[s * 3], ny = N[s * 3 + 1], nz = N[s * 3 + 2], i0 = T[s * 3] * 3;
+    const d = nx * V[i0] + ny * V[i0 + 1] + nz * V[i0 + 2], id = prims.length;
+    prims.push({ S: { type: 'plane', n: [nx, ny, nz], d }, sign: 1, res: 0, facet: true });
+    pending[s] = 0; reg[s] = id; stack.push(s);
+    while (stack.length) {
+      const t = stack.pop();
+      for (let k = 0; k < 3; k++) {
+        const h = adj[t * 3 + k]; if (h < 0) continue;
+        const u = (h / 3) | 0; if (!pending[u]) continue;
+        let ok = N[u * 3] * nx + N[u * 3 + 1] * ny + N[u * 3 + 2] * nz > 0.9999;
+        for (let j = 0; j < 3 && ok; j++) { const i = T[u * 3 + j] * 3; ok = Math.abs(nx * V[i] + ny * V[i + 1] + nz * V[i + 2] - d) <= eps; }
+        if (!ok) continue;
+        pending[u] = 0; reg[u] = id; stack.push(u);
+      }
+    }
+  }
+  return regions.size;
 }

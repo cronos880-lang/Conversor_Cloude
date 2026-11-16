@@ -1,0 +1,12 @@
+// node tools/one.mjs pieza.stl [salida.step]  -> conversión validada con traza de cada intento
+import fs from 'fs'; import path from 'path';
+import { parseSTL } from '../static/core/mesh.js';
+import { convertValidated } from '../static/core/convert.js';
+const init = (await import('../static/vendor/replicad_single.js')).default;
+const oc = await init({ wasmBinary: fs.readFileSync(new URL('../static/vendor/replicad_single.wasm', import.meta.url)), print: () => {}, printErr: () => {} });
+const buf = fs.readFileSync(process.argv[2]); const t0 = performance.now();
+try {
+  const r = convertValidated(parseSTL(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)), oc, { name: path.basename(process.argv[2]).replace(/\.stl$/i, ''), onStatus: s => process.env.QUIET || console.log('  ·', s), trace: c => console.log('    ', JSON.stringify(c)) });
+  if (process.argv[3]) fs.writeFileSync(process.argv[3], r.step);
+  console.log(JSON.stringify(r.report), ((performance.now() - t0) / 1000).toFixed(1) + 's');
+} catch (e) { console.log('ERROR', typeof e, e && e.message || e); }

@@ -10,7 +10,8 @@ import { perp, cross, add, mul } from './fit.js';
  *  - faces[i] = { S, sign, loops: [[{ edge, forward }]] , shell }
  *  - shells[i] = { faces: [índices], volume }
  */
-export function buildBrep(mesh, seg, comp) {
+export function buildBrep(mesh, seg, comp, options = {}) {
+  const polyFaces = options.polyFaces || new Set();
   const { V, T, adj, nt } = mesh, { reg, prims, tol } = seg;
   const P = i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]];
   const next = h => (h % 3 === 2 ? h - 2 : h + 1);
@@ -72,10 +73,12 @@ export function buildBrep(mesh, seg, comp) {
     }
     return id;
   };
-  const edges = chains.map(({ vs, A, B }) => {
+  const edges = [];
+  const same = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-9;
+  const chainEdges = chains.map(({ vs, A, B }) => {
     const SA = prims[A].S, SB = prims[B].S, closed = vs[0] === vs[vs.length - 1];
     const v0 = vertexOf(vs[0]), v1 = vertexOf(vs[vs.length - 1]);
-    const pts = vs.map((v, i) => {
+    let pts = vs.map((v, i) => {
       if (i === 0) return vertices[v0];
       if (i === vs.length - 1) return vertices[v1];
       const p = P(v);
@@ -84,10 +87,27 @@ export function buildBrep(mesh, seg, comp) {
       const q = transversal ? toIntersection(p, SA, SB) : snapPoint(p, [SA, SB], maxMove);
       return q.every(Number.isFinite) && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= maxMove ? q : p;
     });
-    const { curve, dev } = fitCurve(pts, closed, SA, SB, tol);
-    return { v0, v1, curve, dev, n: pts.length };
+    // Quitar puntos repetidos tras el ajuste.
+    pts = pts.filter((p, i) => i === 0 || i === pts.length - 1 || (!same(p, pts[i - 1]) && !same(p, pts[pts.length - 1])));
+    let fit = null;
+    if (!polyFaces.has(A) && !polyFaces.has(B)) { fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null; }
+    if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length }); return [edges.length - 1]; }
+    // Poligonal: un segmento recto por cada arista de la malla.
+    const ids = []; let prev = v0;
+    for (let i = 1; i < pts.length; i++) {
+      let cur = v1;
+      if (i < pts.length - 1) { cur = vertices.length; vertices.push(pts[i]); }
+      const a = vertices[prev], b = vertices[cur], d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(d[0], d[1], d[2]);
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+      edges.push({ v0: prev, v1: cur, curve: { type: 'line', p: a, d: len > 0 ? [d[0] / len, d[1] / len, d[2] / len] : [0, 0, 1] }, dev: Math.max(Math.abs(dist(SA, mid)), Math.abs(dist(SB, mid))), n: 2, poly: true });
+      ids.push(edges.length - 1); prev = cur;
+    }
+    return ids;
   });
-  void dist;
+  for (const f of faces) f.loops = f.loops.map(loop => loop.flatMap(ref => {
+    const list = chainEdges[ref.edge];
+    return ref.forward ? list.map(e => ({ edge: e, forward: true })) : list.slice().reverse().map(e => ({ edge: e, forward: false }));
+  }));
 
   // Envolventes: una por componente conexa de la malla.
   const shells = [];

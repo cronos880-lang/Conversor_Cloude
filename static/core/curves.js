@@ -145,37 +145,41 @@ export function snapPoint(p, surfaces, maxMove) {
 
 /**
  * Curva para una cadena de puntos entre las superficies A y B. Los extremos se
- * respetan exactamente. Devuelve la curva y `dev`, la desviación máxima medida
- * respecto a ambas superficies.
+ * respetan exactamente. Devuelve la curva, `dev` (desviación máxima medida
+ * respecto a ambas superficies) y `ok` (la curva sigue de cerca a la cadena).
  */
 export function fitCurve(pts, closed, A, B, tol) {
   const onBoth = p => Math.max(Math.abs(dist(A, p)), Math.abs(dist(B, p)));
+  // La curva no puede alejarse de la poligonal más que la flecha de un arco razonable.
+  const near = (mid, i) => { const c = sub(pts[i + 1], pts[i]); return norm(sub(mid, mul(add(pts[i], pts[i + 1]), 0.5))) <= Math.max(3 * tol, 0.09 * norm(c)); };
   let curve = null, dev = 0;
   if (!closed) {
     curve = lineFit(pts, tol);
     if (curve) {
       for (let i = 0; i + 1 < pts.length; i++) dev = Math.max(dev, onBoth(mul(add(pts[i], pts[i + 1]), 0.5)));
-      if (dev <= 4 * tol || pts.length === 2) return { curve, dev };
+      if (dev <= 4 * tol || pts.length === 2) return { curve, dev, ok: true };
       curve = null;
     }
   }
   curve = circleFit(pts, closed, tol);
   if (curve) {
-    dev = 0;
+    dev = 0; let ok = true;
     for (let i = 0; i + 1 < pts.length; i++) {
       const m = sub(mul(add(pts[i], pts[i + 1]), 0.5), curve.c);
-      const dir = unit(sub(m, mul(curve.a, dot(m, curve.a))));
-      dev = Math.max(dev, onBoth(add(curve.c, mul(dir, curve.r))));
+      const mid = add(curve.c, mul(unit(sub(m, mul(curve.a, dot(m, curve.a)))), curve.r));
+      dev = Math.max(dev, onBoth(mid)); ok = ok && near(mid, i);
     }
-    if (dev <= 4 * tol) return { curve, dev };
+    if (dev <= 4 * tol && ok) return { curve, dev, ok };
   }
   // Spline por los puntos; si se separa de las superficies, densificar con puntos de la intersección.
+  let ok = true;
+  { const first = splineFit(pts, closed, A, B); for (let i = 0; i + 1 < pts.length; i++) ok = ok && near(splineMid(first, i), i); }
   let P = pts;
   for (let round = 0; ; round++) {
     curve = splineFit(P, closed, A, B);
     dev = 0; const mids = [];
     for (let i = 0; i + 1 < P.length; i++) { const m = splineMid(curve, i); mids.push(m); dev = Math.max(dev, onBoth(m)); }
-    if (dev < 1e-5 || round === 3 || P.length > 1500) break;
+    if (!ok || dev < 1e-5 || round === 3 || P.length > 1500) break;
     const next = [P[0]]; let moved = false;
     for (let i = 0; i + 1 < P.length; i++) {
       if (onBoth(mids[i]) > 1e-5) {
@@ -187,5 +191,5 @@ export function fitCurve(pts, closed, A, B, tol) {
     if (!moved) break;
     P = next;
   }
-  return { curve, dev };
+  return { curve, dev, ok };
 }
