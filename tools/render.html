@@ -1,0 +1,28 @@
+<!doctype html><html><body style="margin:0;background:#fff"><script type="importmap">{"imports":{"three":"/static/vendor/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+window.draw = (data, w, h) => {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(w * 2, h); document.body.append(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#ffffff');
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data.pos), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(data.col), 3));
+  g.computeVertexNormals(); g.computeBoundingSphere();
+  const c = g.boundingSphere.center, r = g.boundingSphere.radius;
+  scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })));
+  const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data.lines), 3));
+  scene.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x000000 })));
+  scene.add(new THREE.AmbientLight(0xffffff, 2.2));
+  const cam = new THREE.PerspectiveCamera(30, w / h, r / 100, r * 100);
+  const views = data.views || [[1, 0.8, 0.9], [-1, -0.7, -0.8]];
+  views.forEach((v, i) => {
+    const d = new THREE.Vector3(...v).normalize().multiplyScalar(r * 3.9 / (data.zoom || 1));
+    const tgt = data.target ? new THREE.Vector3(...data.target) : c;
+    cam.position.copy(tgt).add(d); cam.up.set(0, 0, 1); cam.lookAt(tgt);
+    const l = new THREE.DirectionalLight(0xffffff, 1.2); l.position.copy(cam.position); scene.add(l);
+    renderer.setViewport(i * w, 0, w, h); renderer.setScissor(i * w, 0, w, h); renderer.setScissorTest(true);
+    renderer.render(scene, cam); scene.remove(l);
+  });
+};
+</script></body></html>
