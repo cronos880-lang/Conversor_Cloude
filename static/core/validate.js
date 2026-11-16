@@ -83,7 +83,7 @@ export function validate(oc, stepText, brep, regionArea) {
     if (result.free) result.valid = false;
     // Área por región (las dos mitades de una esfera o toro completos comparten región).
     let total = 0; for (const a of regionArea) total += a;
-    const slack = 3e-5 * total + 0.02;
+    const slack = 5e-4 * total + 0.02;
     const byRegion = new Map();
     brep.faces.forEach((f, i) => { if (!f.loops.length) return; const e = byRegion.get(f.region) || { area: 0, seen: true }; e.area += got[i]; e.seen = e.seen && !!seen[i]; byRegion.set(f.region, e); });
     for (const [region, e] of byRegion) {

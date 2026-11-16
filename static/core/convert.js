@@ -1,6 +1,6 @@
 // Conversión completa: posiciones STL -> texto STEP con superficies analíticas.
 import { buildMesh, components } from './mesh.js';
-import { segment, demote, absorbSlivers } from './segment.js';
+import { segment, demote } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate } from './validate.js';
@@ -81,7 +81,7 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
       }
     }
     if (toDemote.size) {
-      progress = true; demoted += demote(mesh, seg, toDemote); absorbSlivers(mesh, seg);
+      progress = true; demoted += demote(mesh, seg, toDemote);
       for (let i = 0; i < seg.prims.length; i++) if (seg.prims[i].facet) polyFaces.add(i);
     }
     if (!progress) break;
