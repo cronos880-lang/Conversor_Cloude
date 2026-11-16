@@ -75,7 +75,7 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     }
     return id;
   };
-  const edges = [];
+  const edges = [], chainInfo = [];
   const same = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-9;
   const chainEdges = chains.map(({ vs, A, B }) => {
     const SA = prims[A].S, SB = prims[B].S, closed = vs[0] === vs[vs.length - 1];
@@ -93,6 +93,7 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     pts = pts.filter((p, i) => i === 0 || i === pts.length - 1 || (!same(p, pts[i - 1]) && !same(p, pts[pts.length - 1])));
     let fit = null;
     if (!polyFaces.has(A) && !polyFaces.has(B)) { fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null; }
+    chainInfo.push({ A: SA.type, B: SB.type, kind: fit ? fit.curve.type : 'poly', n: pts.length, closed, len: +Math.hypot(...pts[0].map((x, i) => x - pts[pts.length - 1][i])).toFixed(3), resA: +(prims[A].res || 0).toExponential(1), resB: +(prims[B].res || 0).toExponential(1) });
     if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length }); return [edges.length - 1]; }
     // Poligonal: un segmento recto por cada arista de la malla.
     const ids = []; let prev = v0;
@@ -106,6 +107,18 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     }
     return ids;
   });
+  // En las caras planas, el contorno exterior es el bucle que encierra más área.
+  for (const f of faces) {
+    if (f.S.type !== 'plane' || f.loops.length < 2) continue;
+    const n = f.S.n; let best = -Infinity;
+    f.loops.forEach((loop, i) => {
+      const pts = loop.flatMap(ref => { const vs = chains[ref.edge].vs.map(P); return (ref.forward ? vs : vs.slice().reverse()).slice(0, -1); });
+      let ax = 0, ay = 0, az = 0;
+      for (let k = 0; k < pts.length; k++) { const p = pts[k], q = pts[(k + 1) % pts.length]; ax += p[1] * q[2] - p[2] * q[1]; ay += p[2] * q[0] - p[0] * q[2]; az += p[0] * q[1] - p[1] * q[0]; }
+      const area = (ax * n[0] + ay * n[1] + az * n[2]) / 2;
+      if (area > best) { best = area; f.outer = i; }
+    });
+  }
   for (const f of faces) f.loops = f.loops.map(loop => loop.flatMap(ref => {
     const list = chainEdges[ref.edge];
     return ref.forward ? list.map(e => ({ edge: e, forward: true })) : list.slice().reverse().map(e => ({ edge: e, forward: false }));
@@ -121,6 +134,30 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     const a = P(T[t * 3]), b = P(T[t * 3 + 1]), d = P(T[t * 3 + 2]);
     const x = [a, b, d].map(p => [p[0] - o[0], p[1] - o[1], p[2] - o[2]]);
     shells[c].volume += (x[0][0] * (x[1][1] * x[2][2] - x[1][2] * x[2][1]) + x[0][1] * (x[1][2] * x[2][0] - x[1][0] * x[2][2]) + x[0][2] * (x[1][0] * x[2][1] - x[1][1] * x[2][0])) / 6;
+  }
+
+  // Cavidades: una envolvente de volumen negativo es un hueco del sólido que la contiene.
+  for (let c = 0; c < shells.length; c++) {
+    if (shells[c].volume >= 0) continue;
+    let t0 = 0; while (comp.comp[t0] !== c) t0++;
+    const p = P(T[t0 * 3]); let parent = -1;
+    for (let k = 0; k < shells.length; k++) {
+      if (shells[k].volume <= 0 || (parent >= 0 && shells[k].volume >= shells[parent].volume)) continue;
+      // Rayo en +x (con una ligera inclinación para evitar aristas): número impar de cruces = dentro.
+      const dir = [1, 0.0137, 0.0071]; let hits = 0;
+      for (let t = 0; t < nt; t++) {
+        if (comp.comp[t] !== k) continue;
+        const a = P(T[t * 3]), e1 = P(T[t * 3 + 1]).map((x, i) => x - a[i]), e2 = P(T[t * 3 + 2]).map((x, i) => x - a[i]);
+        const h = [dir[1] * e2[2] - dir[2] * e2[1], dir[2] * e2[0] - dir[0] * e2[2], dir[0] * e2[1] - dir[1] * e2[0]];
+        const det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2]; if (Math.abs(det) < 1e-300) continue;
+        const s = p.map((x, i) => x - a[i]), u = (s[0] * h[0] + s[1] * h[1] + s[2] * h[2]) / det; if (u < 0 || u > 1) continue;
+        const q = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+        const v = (dir[0] * q[0] + dir[1] * q[1] + dir[2] * q[2]) / det; if (v < 0 || u + v > 1) continue;
+        if ((e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det > 0) hits++;
+      }
+      if (hits % 2 === 1) parent = k;
+    }
+    shells[c].parent = parent;
   }
 
   // Superficies cerradas sin contorno (esfera o toro completos): dividir en dos mitades.
@@ -146,5 +183,5 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     } else throw new Error('Superficie sin contorno no admitida.');
   }
   void cross;
-  return { vertices, edges, faces: faces.concat(extra), shells };
+  return { vertices, edges, faces: faces.concat(extra), shells, chainInfo };
 }

@@ -31,14 +31,15 @@ export function validate(oc, stepText, brep, regionArea) {
     const got = new Float64Array(brep.faces.length), seen = new Uint8Array(brep.faces.length);
     // Aristas libres: las que solo usa una cara indican que la envolvente no cierra.
     const edgeUse = new Map(); // hash -> [{ edge, count, faces }]
-    const useEdge = (edge, faceIndex) => {
+    const useEdge = (edge, faceIndex, reversedFace) => {
       if (oc.BRep_Tool.Degenerated(oc.TopoDS.Edge(edge))) return;
       const ends = []; const ev = new oc.TopExp_Explorer(edge, E.TopAbs_VERTEX, E.TopAbs_SHAPE);
       for (; ev.More(); ev.Next()) { const p = oc.BRep_Tool.Pnt(oc.TopoDS.Vertex(ev.Current())); ends.push(key([p.X(), p.Y(), p.Z()])); p.delete(); }
       ev.delete();
       const h = ends.sort().join('|'); let list = edgeUse.get(h); if (!list) edgeUse.set(h, list = []);
-      for (const item of list) if (item.edge.IsSame(edge)) { item.count++; item.faces.add(faceIndex); return; }
-      list.push({ edge, count: 1, faces: new Set([faceIndex]) });
+      const o = edge.Orientation().value; void reversedFace;
+      for (const item of list) if (item.edge.IsSame(edge)) { item.count++; item.faces.add(faceIndex); item.orients.push(o); return; }
+      list.push({ edge, count: 1, faces: new Set([faceIndex]), orients: [o] });
     };
     const faceRegion = [];
     const ex = new oc.TopExp_Explorer(shape, E.TopAbs_FACE, E.TopAbs_SHAPE);
@@ -49,7 +50,8 @@ export function validate(oc, stepText, brep, regionArea) {
       const area = g.Mass(); g.delete();
       const fc = new oc.BRepCheck_Analyzer(face, true, false, false), ok = fc.IsValid(); fc.delete();
       const ee = new oc.TopExp_Explorer(face, E.TopAbs_EDGE, E.TopAbs_SHAPE);
-      for (; ee.More(); ee.Next()) useEdge(ee.Current(), index);
+      const rev = face.Orientation().value === 1;
+      for (; ee.More(); ee.Next()) useEdge(ee.Current(), index, rev);
       ee.delete();
       const votes = new Map(); let nv = 0;
       const vx = new oc.TopExp_Explorer(face, E.TopAbs_VERTEX, E.TopAbs_SHAPE);
@@ -64,7 +66,7 @@ export function validate(oc, stepText, brep, regionArea) {
       if (tie) {
         // Desempate: la cara candidata con área más parecida.
         let diff = Infinity;
-        for (const [i, c] of votes) if (c === score) { const d = Math.abs(regionArea[brep.faces[i].region] - area); if (d < diff) { diff = d; best = i; } }
+        for (const [i, c] of votes) if (c === score) { const d = Math.abs(regionArea[brep.faces[i].region] - area) + (seen[i] ? 1e30 : 0); if (d < diff) { diff = d; best = i; } }
       }
       if (best < 0 || score < nv / 2) { unmatched.push({ ok, area }); continue; }
       faceRegion[index] = brep.faces[best].region;
@@ -86,6 +88,7 @@ export function validate(oc, stepText, brep, regionArea) {
     brep.faces.forEach((f, i) => { if (!f.loops.length) return; const e = byRegion.get(f.region) || { area: 0, seen: true }; e.area += got[i]; e.seen = e.seen && !!seen[i]; byRegion.set(f.region, e); });
     for (const [region, e] of byRegion) {
       const want = regionArea[region];
+      if (e.seen && (e.area < 0 || e.area > 2.5 * want + slack)) (result.gross = result.gross || new Set()).add(region);
       if (!e.seen || Math.abs(e.area - want) > 0.2 * want + slack) { result.bad.add(region); (result.why = result.why || []).push([region, e.seen, +want.toFixed(4), +e.area.toFixed(4)]); }
     }
     result.unmatched = unmatched.length;

@@ -52,15 +52,18 @@ function circleFit(pts, closed, tol) {
   for (const [x, y] of q) if (Math.abs(Math.hypot(x - c[0], y - c[1]) - c[2]) > tol) return null;
   // Sentido de giro y monotonía angular.
   const ang = q.map(([x, y]) => Math.atan2(y - c[1], x - c[0]));
-  let total = 0, sign = 0;
+  let total = 0, sign = 0, widest = 0;
   const count = closed ? n : n - 1;
   for (let i = 0; i < count; i++) {
     let d = ang[(i + 1) % n] - ang[i];
     while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
     if (d === 0) return null;
+    widest = Math.max(widest, Math.abs(d));
     if (sign === 0) sign = Math.sign(d); else if (Math.sign(d) !== sign) return null;
     total += d;
   }
+  // Un arco apoyado en dos grupos de puntos separados por un gran vacío no es fiable.
+  if (count >= 3 && widest > 0.6 * Math.abs(total)) return null;
   if (closed && Math.abs(Math.abs(total) - 2 * Math.PI) > 1e-6) return null;
   if (!closed && Math.abs(total) >= 2 * Math.PI - 1e-9) return null;
   const axis = sign > 0 ? nrm : mul(nrm, -1);

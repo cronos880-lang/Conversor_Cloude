@@ -169,6 +169,17 @@ export function segment(mesh, options = {}) {
     return ids.map(P);
   }
   const areaOf = tris => { let s = 0; for (const t of tris) s += A[t]; return s; };
+  /** ¿Están los valores angulares repartidos, sin un gran vacío entre dos grupos? */
+  function spread(values, eps) {
+    const v = []; let last = -Infinity;
+    for (const x of values.slice().sort((a, b) => a - b)) if (x - last > eps) { v.push(x); last = x; }
+    if (v.length < 4) return false;
+    const gaps = []; for (let i = 1; i < v.length; i++) gaps.push(v[i] - v[i - 1]);
+    gaps.push(v[0] + 2 * Math.PI - v[v.length - 1]);
+    gaps.sort((a, b) => b - a);
+    const range = 2 * Math.PI - gaps[0];
+    return gaps[1] <= 0.6 * range;
+  }
   function distinct(values, eps) {
     values.sort((a, b) => a - b); let n = values.length ? 1 : 0, last = values[0];
     for (let i = 1; i < values.length; i++) if (values[i] - last > eps) { n++; last = values[i]; }
@@ -200,7 +211,7 @@ export function segment(mesh, options = {}) {
     const theta = pts.map(p => { const v = sub(p, o); return Math.atan2(dot(v, e2), dot(v, e1)); });
     // Separación angular mínima equivalente a varias veces la tolerancia sobre el radio.
     const epsA = Math.max(1e-3, rmin > 0 ? 4 * tol / (S.type === 'torus' ? S.R : rmin) : 1e-3);
-    if (distinct(theta, epsA) < 4) return false;
+    if (distinct(theta, epsA) < 4 || !spread(theta, epsA)) return false;
     if (S.type === 'cylinder') return S.r < big && S.r > tol * 5;
     if (S.type === 'cone') return S.alpha > 1 * RAD && S.alpha < 89 * RAD;
     if (!(S.r > tol * 5 && S.R > S.r * 1.0001 && S.R < big)) return false;
@@ -363,28 +374,34 @@ export function segment(mesh, options = {}) {
     prims.push({ S, sign: 1, res: residual(S, pts) });
     for (const t of f.tris) reg[t] = id;
   }
-  absorbSlivers();
-  return { reg, prims, tol };
+  const seg = { reg, prims, tol };
+  absorbSlivers(mesh, seg);
+  return seg;
+}
 
-  /** Las regiones formadas solo por triángulos sin anchura se unen a la región vecina. */
-  function absorbSlivers() {
-    const tris = prims.map(() => []);
-    for (let t = 0; t < nt; t++) tris[reg[t]].push(t);
-    for (let r = 0; r < prims.length; r++) {
-      if (!tris[r].length || !tris[r].every(t => sliver(t, tol))) continue;
-      const share = new Map();
-      for (const t of tris[r]) for (let k = 0; k < 3; k++) {
-        const u = nbr(t, k); if (u < 0 || reg[u] === r) continue;
-        const a = T[t * 3 + k] * 3, b = T[t * 3 + (k + 1) % 3] * 3;
-        share.set(reg[u], (share.get(reg[u]) || 0) + Math.hypot(V[a] - V[b], V[a + 1] - V[b + 1], V[a + 2] - V[b + 2]));
-      }
-      let best = -1, len = 0;
-      for (const [q, l] of share) if (l > len) { len = l; best = q; }
-      if (best < 0) continue;
-      for (const t of tris[r]) { reg[t] = best; tris[best].push(t); }
-      tris[r] = [];
+/** Las regiones formadas solo por triángulos sin anchura se unen a la región vecina. */
+export function absorbSlivers(mesh, seg) {
+  const { V, T, A, adj, nt } = mesh, { reg, prims, tol } = seg;
+  const edge = (t, k) => { const a = T[t * 3 + k] * 3, b = T[t * 3 + (k + 1) % 3] * 3; return Math.hypot(V[a] - V[b], V[a + 1] - V[b + 1], V[a + 2] - V[b + 2]); };
+  const sliver = t => 2 * A[t] < Math.max(edge(t, 0), edge(t, 1), edge(t, 2)) * tol * 2;
+  const tris = prims.map(() => []);
+  for (let t = 0; t < nt; t++) tris[reg[t]].push(t);
+  let merged = 0;
+  for (let r = 0; r < prims.length; r++) {
+    if (!tris[r].length || !tris[r].every(sliver)) continue;
+    const share = new Map();
+    for (const t of tris[r]) for (let k = 0; k < 3; k++) {
+      const h = adj[t * 3 + k]; if (h < 0) continue;
+      const q = reg[(h / 3) | 0]; if (q === r) continue;
+      share.set(q, (share.get(q) || 0) + edge(t, k));
     }
+    let best = -1, len = 0;
+    for (const [q, l] of share) if (l > len) { len = l; best = q; }
+    if (best < 0) continue;
+    for (const t of tris[r]) { reg[t] = best; tris[best].push(t); }
+    tris[r] = []; merged++;
   }
+  return merged;
 }
 
 /**

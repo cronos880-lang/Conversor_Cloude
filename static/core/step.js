@@ -8,7 +8,7 @@ function num(x) {
   return s.includes('.') ? s : s + '.';
 }
 
-export function writeStep(brep, name = 'pieza', uncertainty = 1e-6) {
+export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}) {
   const lines = []; let id = 0;
   const add_ = text => { lines.push(`#${++id}=${text};`); return id; };
   const pt = p => add_(`CARTESIAN_POINT('',(${num(p[0])},${num(p[1])},${num(p[2])}))`);
@@ -71,12 +71,15 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6) {
     return add_(`ADVANCED_FACE('',(${bounds.join(',')}),#${surface(f.S, f)},${f.sign > 0 ? '.T.' : '.F.'})`);
   });
 
-  const solids = [];
-  for (const shell of brep.shells) {
-    if (!shell.faces.length) continue;
-    const cs = add_(`CLOSED_SHELL('',(${shell.faces.map(i => '#' + faceIds[i]).join(',')}))`);
-    solids.push(add_(`MANIFOLD_SOLID_BREP('',#${cs})`));
-  }
+  const solids = [], shellIds = brep.shells.map(shell => (shell.faces.length ? add_(`CLOSED_SHELL('',(${shell.faces.map(i => '#' + faceIds[i]).join(',')}))`) : 0));
+  const voidFlag = options.voidFlag ?? '.F.';
+  brep.shells.forEach((shell, c) => {
+    if (!shellIds[c] || shell.parent >= 0) return;
+    const voids = brep.shells.map((x, i) => (x.parent === c && shellIds[i] ? i : -1)).filter(i => i >= 0);
+    if (!voids.length) { solids.push(add_(`MANIFOLD_SOLID_BREP('',#${shellIds[c]})`)); return; }
+    const oriented = voids.map(i => '#' + add_(`ORIENTED_CLOSED_SHELL('',*,#${shellIds[i]},${voidFlag})`)).join(',');
+    solids.push(add_(`BREP_WITH_VOIDS('',#${shellIds[c]},(${oriented}))`));
+  });
   const rep = add_(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${origin},${solids.map(s => '#' + s).join(',')}),#${ctx})`);
   add_(`SHAPE_DEFINITION_REPRESENTATION(#${shape},#${rep})`);
 
