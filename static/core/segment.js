@@ -215,14 +215,8 @@ export function segment(mesh, options = {}) {
     let extent = 0; for (const p of pts) extent = Math.max(extent, Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1], p[2] - pts[0][2]));
     const sag = r => { const half = Math.min(extent / 2, r); return r - Math.sqrt(r * r - half * half); };
     if (S.type === 'sphere') {
-      // Una esfera debe curvarse en dos direcciones: las normales se reparten en dos ejes.
-      // Una tira curvada en una sola dirección (redondeo largo) es un cilindro, no una esfera.
-      const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], m = [0, 0, 0]; let w = 0;
-      for (const t of tris) { w += A[t]; for (let i = 0; i < 3; i++) m[i] += A[t] * N[t * 3 + i]; }
-      for (let i = 0; i < 3; i++) m[i] /= w;
-      for (const t of tris) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) M[i][j] += A[t] * (N[t * 3 + i] - m[i]) * (N[t * 3 + j] - m[j]) / w;
-      const ev = eigSym3(M).values;
-      if (!(ev[1] > 0.1 * ev[2])) return false;
+      // Una esfera debe curvarse en dos direcciones y no ser una franja junto al ecuador.
+      if (!sphereNormals(mesh, tris)) return false;
       return S.r < big && S.r > tol * 5 && sag(S.r) > 4 * tol;
     }
     if (S.type === 'cylinder' && !(sag(S.r) > 4 * tol)) return false;
@@ -233,7 +227,17 @@ export function segment(mesh, options = {}) {
     const epsA = Math.max(1e-3, rmin > 0 ? 4 * tol / (S.type === 'torus' ? S.R : rmin) : 1e-3);
     if (distinct(theta, epsA) < 4 || !spread(theta, epsA)) return false;
     if (S.type === 'cylinder') return S.r < big && S.r > tol * 5;
-    if (S.type === 'cone') return S.alpha > 1 * RAD && S.alpha < 89 * RAD;
+    if (S.type === 'cone') {
+      // Un cono cuyo vértice queda muy lejos de la cara es casi un cilindro (o un plano):
+      // tomarlo como cono crea geometría que se dispara hacia el vértice en otros CAD.
+      const c = [0, 0, 0]; for (const p of pts) { c[0] += p[0] / pts.length; c[1] += p[1] / pts.length; c[2] += p[2] / pts.length; }
+      const far = Math.hypot(c[0] - S.apex[0], c[1] - S.apex[1], c[2] - S.apex[2]);
+      // Ni que contenga su propio vértice: un abanico de triángulos casi coplanarios que
+      // parten de un punto se ajusta a un cono falso con el vértice en ese punto.
+      let nearApex = Infinity; for (const p of pts) nearApex = Math.min(nearApex, Math.hypot(p[0] - S.apex[0], p[1] - S.apex[1], p[2] - S.apex[2]));
+      if (nearApex < Math.max(4 * tol, 0.02 * extent)) return false;
+      return S.alpha > 1 * RAD && S.alpha < 89 * RAD && far < 6 * Math.max(extent, tol);
+    }
     if (!(S.r > tol * 5 && S.R > S.r * 1.0001 && S.R < big)) return false;
     const phi = pts.map(p => { const v = sub(p, o), h = dot(v, a); return Math.atan2(h, Math.sqrt(Math.max(0, dot(v, v) - h * h)) - S.R); });
     return distinct(phi, Math.max(1e-3, 4 * tol / S.r)) >= 4;
@@ -295,6 +299,7 @@ export function segment(mesh, options = {}) {
       S = S2; tris = tris2;
       if (same) break;
     }
+    if (options.hyp) options.hyp(type, cluster.length, tris.length, verified(S, tris), S);
     if (options.debug) console.log('   ', type, 'cluster', cluster.length, 'grown', tris.length, 'verified', verified(S, tris), S.r && S.r.toFixed(4), 'span', (Math.acos(cosSpan) / RAD).toFixed(1));
     if (!verified(S, tris)) return null;
     return { S, sign, tris, area: areaOf(tris), cosSpan };
@@ -341,6 +346,18 @@ export function segment(mesh, options = {}) {
         if (h && (!best || h.area > best.area * 1.25)) best = h;
       }
       if (!best) continue;
+      // Con la región ya crecida, el ajuste está mejor condicionado: probar a ampliarla con
+      // otro tipo (p. ej. tiras de cilindro que en realidad son un toro grande).
+      for (let pass = 0; pass < 2; pass++) {
+        const sample = best.tris.length > 120 ? best.tris.filter((_, i) => i % Math.ceil(best.tris.length / 120) === 0) : best.tris;
+        let upgraded = false;
+        for (const type of TYPES) {
+          if (type === best.S.type) continue;
+          const h = hypothesis(type, sample);
+          if (h && h.area > best.area * 1.25) { best = h; upgraded = true; }
+        }
+        if (!upgraded) break;
+      }
       const id = regions.length; regions.push(best);
       for (const t of best.tris) reg[t] = id;
     }
@@ -414,6 +431,21 @@ function pinches(T, adj, u, t, inside, vMark, stamp) {
     return true;
   }
   return false;
+}
+
+/** ¿Las normales de estos triángulos corresponden a un casquete de esfera (curvado en dos
+ * direcciones y no una franja alrededor del ecuador)? */
+export function sphereNormals(mesh, tris) {
+  const { N, A } = mesh, M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], M2 = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], m = [0, 0, 0]; let w = 0;
+  for (const t of tris) { w += A[t]; for (let i = 0; i < 3; i++) m[i] += A[t] * N[t * 3 + i]; }
+  if (!(w > 0)) return false;
+  for (let i = 0; i < 3; i++) m[i] /= w;
+  for (const t of tris) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+    M[i][j] += A[t] * (N[t * 3 + i] - m[i]) * (N[t * 3 + j] - m[j]) / w;
+    M2[i][j] += A[t] * N[t * 3 + i] * N[t * 3 + j] / w;
+  }
+  const ev = eigSym3(M).values, ev2 = eigSym3(M2).values;
+  return ev[1] > 0.1 * ev[2] && ev2[0] > 0.01 * ev2[2];
 }
 let pinchStamp = 0;
 /** ¿Hay algún vértice donde el contorno de la cara (conjunto de triángulos) se toca a sí mismo? */
@@ -500,53 +532,96 @@ export function demote(mesh, seg, regions) {
 }
 
 /**
- * Une regiones vecinas que son la misma superficie (p. ej. un redondeo que salió en
- * varias tiras): la superficie de la región mayor debe pasar por todos los vértices de
- * la menor con la misma orientación. Modifica `seg` y devuelve cuántas uniones hizo.
+ * Unificación global: une regiones vecinas que son una misma superficie, aunque el
+ * reconocimiento las separara o les diera tipos distintos (p. ej. una franja de toro tomada
+ * por esfera junto al resto del toro). Para cada par vecino se ajusta una sola superficie a
+ * la unión (del tipo de cualquiera de las dos, o toro, cilindro, cono o esfera) y se acepta
+ * si pasa por todos los vértices con la orientación de los triángulos. Se repite hasta que no
+ * queda nada que unir. Modifica `seg` y devuelve cuántas uniones hizo.
  */
 export function mergeSameSurfaces(mesh, seg) {
-  const { V, T, A, adj, nt } = mesh, { reg, prims, tol } = seg;
+  const { V, T, N, A, adj, nt } = mesh, { reg, prims, tol } = seg;
   const R = prims.length, area = new Float64Array(R), tris = prims.map(() => []);
   for (let t = 0; t < nt; t++) { area[reg[t]] += A[t]; tris[reg[t]].push(t); }
-  const parent = Int32Array.from({ length: R }, (_, i) => i);
-  const find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
-  const same = (a, b) => {
-    const Sa = prims[a].S, Sb = prims[b].S;
-    if (Sa.type !== Sb.type || Sa.type === 'extrusion' || prims[a].facet || prims[b].facet) return false;
-    if (Sa.type === 'plane') { if (Sa.n[0] * Sb.n[0] + Sa.n[1] * Sb.n[1] + Sa.n[2] * Sb.n[2] < 0.9999) return false; }
-    else if (prims[a].sign !== prims[b].sign) return false;
-    // Cada región sobre la superficie de la otra.
-    const on = (S, r) => tris[r].every(t => [0, 1, 2].every(j => { const i = T[t * 3 + j]; return Math.abs(dist(S, [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]])) <= tol; }));
-    if (on(Sa, b) && on(Sb, a)) return true;
-    if (Sa.type === 'plane') return false;
-    // Ajuste común: partir de la superficie de la región mayor y reajustar con ambas.
-    const big = area[a] >= area[b] ? a : b, set = new Set();
-    for (const r of [a, b]) for (const t of tris[r]) for (let j = 0; j < 3; j++) set.add(T[t * 3 + j]);
-    let pts = [...set].map(i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]]);
-    const sample = pts.length > 400 ? pts.filter((_, i) => i % Math.ceil(pts.length / 400) === 0) : pts;
-    const S = refine(prims[big].S, sample, mesh.diag);
-    if (!pts.every(p => Math.abs(dist(S, p)) <= tol)) return false;
-    refit.set(big, S);
-    return true;
-  };
-  const refit = new Map();
-  const tried = new Set(); let merged = 0;
-  for (let h = 0; h < nt * 3; h++) {
-    if (adj[h] < 0) continue;
-    const a = reg[(h / 3) | 0], b = reg[(adj[h] / 3) | 0];
-    if (a === b) continue;
-    const key = a < b ? a * R + b : b * R + a;
-    if (tried.has(key)) continue; tried.add(key);
-    const ra = find(a), rb = find(b); if (ra === rb) continue;
-    if (!same(a, b)) continue;
-    // La región grande conserva su superficie.
-    const keep = area[ra] >= area[rb] ? ra : rb, gone = keep === ra ? rb : ra;
-    parent[gone] = keep; area[keep] += area[gone];
-    const big = area[a] >= area[b] ? a : b;
-    if (refit.has(big)) { prims[keep] = { ...prims[keep], S: refit.get(big) }; refit.delete(big); }
-    tris[keep] = tris[keep].concat(tris[gone]);
-    merged++;
+  const P = i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]];
+  const centroid = t => [0, 1, 2].map(k => (V[T[t * 3] * 3 + k] + V[T[t * 3 + 1] * 3 + k] + V[T[t * 3 + 2] * 3 + k]) / 3);
+  const Nt = t => [N[t * 3], N[t * 3 + 1], N[t * 3 + 2]];
+  const thin = (list, n) => list.length > n ? list.filter((_, i) => i % Math.ceil(list.length / n) === 0) : list;
+
+  /** Superficie común a la unión de las regiones a y b, o null. */
+  function common(a, b) {
+    const pa = prims[a], pb = prims[b];
+    if (pa.facet || pb.facet || pa.S.type === 'extrusion' || pb.S.type === 'extrusion') return null;
+    const vs = new Set(); for (const r of [a, b]) for (const t of tris[r]) for (let j = 0; j < 3; j++) vs.add(T[t * 3 + j]);
+    const pts = [...vs].map(P), on = S => pts.every(p => Math.abs(dist(S, p)) <= tol);
+    if (pa.S.type === 'plane' || pb.S.type === 'plane') {
+      if (pa.S.type !== pb.S.type) {
+        // Región plana pequeña sobre una superficie curva vecina: se integra en ella.
+        const [pl, cu] = pa.S.type === 'plane' ? [a, b] : [b, a];
+        if (tris[pl].length > 24 || area[pl] > 0.2 * area[cu]) return null;
+        const S = prims[cu].S, sign = prims[cu].sign;
+        const ok = tris[pl].every(t => [0, 1, 2].every(j => Math.abs(dist(S, P(T[t * 3 + j]))) <= tol) && sign * dot(Nt(t), normalAt(S, centroid(t))) > Math.cos(30 * RAD));
+        return ok ? { S, sign, keep: cu } : null;
+      }
+      if (dot(pa.S.n, pb.S.n) < 0.9999) return null;
+      const S = area[a] >= area[b] ? pa.S : pb.S;
+      return on(S) ? { S, sign: 1 } : null;
+    }
+    const sample = thin(pts, 400), ts = thin(tris[a].concat(tris[b]), 300), C = ts.map(centroid), Nrm = ts.map(Nt);
+    const big = area[a] >= area[b] ? pa : pb, small = big === pa ? pb : pa;
+    const cands = [];
+    for (const src of [big, small]) cands.push(() => refine(src.S, sample, mesh.diag));
+    for (const type of ['torus', 'cylinder', 'cone', 'sphere']) cands.push(() => {
+      const S0 = type === 'torus' ? fitTorus(sample, C, Nrm) : type === 'cylinder' ? fitCylinder(sample, Nrm) : type === 'cone' ? (fitCone(sample, C, Nrm) || fitConeFromNormals(sample, Nrm, C)) : fitSphere(sample);
+      return S0 ? refine(S0, sample, mesh.diag) : null;
+    });
+    for (const make of cands) {
+      let S; try { S = make(); } catch { S = null; }
+      if (!S || !on(S)) continue;
+      if (S.type === 'cone') {
+        let near = Infinity; for (const p of pts) near = Math.min(near, Math.hypot(p[0] - S.apex[0], p[1] - S.apex[1], p[2] - S.apex[2]));
+        if (near < 4 * tol || !(S.alpha > RAD && S.alpha < 89 * RAD)) continue;
+      }
+      if ((S.type === 'cylinder' || S.type === 'sphere' || S.type === 'torus') && !(S.r > tol * 5 && S.r < mesh.diag * 100)) continue;
+      if (S.type === 'sphere' && !sphereNormals(mesh, tris[a].concat(tris[b]))) continue;
+      // Orientación: las normales de los triángulos deben seguir a la de la superficie.
+      let sAll = 0, bad = 0, tot = 0;
+      for (const r of [a, b]) for (const t of tris[r]) {
+        const d = dot(Nt(t), normalAt(S, centroid(t))); sAll += A[t] * d; tot += A[t];
+      }
+      const sign = sAll >= 0 ? 1 : -1;
+      for (const r of [a, b]) for (const t of tris[r]) if (sign * dot(Nt(t), normalAt(S, centroid(t))) < Math.cos(30 * RAD)) bad += A[t];
+      if (bad > 0.02 * tot) continue;
+      return { S, sign };
+    }
+    return null;
   }
-  if (merged) for (let t = 0; t < nt; t++) reg[t] = find(reg[t]);
+
+  let merged = 0;
+  for (let pass = 0; pass < 4; pass++) {
+    const pairs = new Map();
+    for (let h = 0; h < nt * 3; h++) {
+      if (adj[h] < 0) continue;
+      const a = reg[(h / 3) | 0], b = reg[(adj[h] / 3) | 0];
+      if (a === b) continue;
+      const key = a < b ? a * R + b : b * R + a;
+      if (!pairs.has(key)) pairs.set(key, [Math.min(a, b), Math.max(a, b)]);
+    }
+    // Primero los pares con más superficie: las uniones grandes guían a las pequeñas.
+    const list = [...pairs.values()].sort((p, q) => (area[q[0]] + area[q[1]]) - (area[p[0]] + area[p[1]]));
+    let changed = 0;
+    for (const [a, b] of list) {
+      if (!tris[a].length || !tris[b].length) continue;
+      const c = common(a, b); if (!c) continue;
+      const keep = c.keep ?? (area[a] >= area[b] ? a : b), gone = keep === a ? b : a;
+      for (const t of tris[gone]) reg[t] = keep;
+      tris[keep] = tris[keep].concat(tris[gone]); tris[gone] = [];
+      area[keep] += area[gone]; area[gone] = 0;
+      prims[keep] = { ...prims[keep], S: c.S, sign: c.sign };
+      changed++;
+    }
+    merged += changed;
+    if (!changed) break;
+  }
   return merged;
 }

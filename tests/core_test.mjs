@@ -1,6 +1,7 @@
 // Pruebas del núcleo con el motor WebAssembly real: node tests/core_test.mjs
 import fs from 'fs';
 import { convertValidated } from '../static/core/convert.js';
+import { revolve, boss } from '../tools/synth.mjs';
 const init = (await import('../static/vendor/replicad_single.js')).default;
 const newOc = () => init({ wasmBinary: fs.readFileSync(new URL('../static/vendor/replicad_single.wasm', import.meta.url)), print: () => {}, printErr: () => {} });
 
@@ -35,6 +36,9 @@ const cases = [
   ['caja con cavidad', [...box([0, 0, 0], 10, false), ...box([3, 3, 3], 4, true)], { faces: 12, types: { plane: 12 }, volume: 936 }],
   ['dos piezas', [...box([0, 0, 0], 10, false), ...box([20, 0, 0], 5, false)], { faces: 12, types: { plane: 12 }, volume: 1125 }],
   ['caja con un hueco (reparación)', openBox, { faces: 6, types: { plane: 6 }, volume: 125 }],
+  // Redondeos (toros) generados por revolución, con las normales hacia fuera como en un STL real.
+  ['tetón con redondeo en la base', revolve(boss(1.5, 6), 64).map(t => [t[0], t[2], t[1]]), { faces: 6, types: { plane: 3, cylinder: 2, torus: 1 }, volume: 0 }],
+  ['borde redondeado', revolve([[0, 0], [20, 0], [20, 2], ...Array.from({ length: 7 }, (_, k) => { const t = (Math.PI / 2) * (k + 1) / 8; return [18 + 2 * Math.cos(t), 2 + 2 * Math.sin(t)]; }), [18, 4], [0, 4]], 96).map(t => [t[0], t[2], t[1]]), { faces: 4, types: { plane: 2, cylinder: 1, torus: 1 }, volume: 0 }],
 ];
 let failed = 0;
 for (const [name, tris, want] of cases) {
@@ -43,7 +47,8 @@ for (const [name, tris, want] of cases) {
     const rep = r.report, errs = [];
     if (rep.faces !== want.faces) errs.push(`caras ${rep.faces} ≠ ${want.faces}`);
     for (const k of Object.keys(want.types)) if (rep.types[k] !== want.types[k]) errs.push(`${k} ${rep.types[k]} ≠ ${want.types[k]}`);
-    if (Math.abs(rep.checkedVolume - want.volume) > 0.005 * want.volume) errs.push(`volumen ${rep.checkedVolume} ≠ ${want.volume}`);
+    if (want.volume && Math.abs(rep.checkedVolume - want.volume) > (want.volumeTol || 0.005) * want.volume) errs.push(`volumen ${rep.checkedVolume} ≠ ${want.volume}`);
+    if (Math.abs(rep.checkedVolume - rep.volume) > 0.005 * Math.abs(rep.volume)) errs.push(`volumen OCC ${rep.checkedVolume} ≠ malla ${rep.volume}`);
     if (!r.step.startsWith('ISO-10303-21;')) errs.push('cabecera STEP');
     console.log(errs.length ? 'FALLA' : 'PASA ', name, errs.join('; '));
     if (errs.length) failed++;

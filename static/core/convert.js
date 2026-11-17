@@ -1,5 +1,5 @@
 // Conversión completa: posiciones STL -> texto STEP con superficies analíticas.
-import { buildMesh, components, dropFlatComponents } from './mesh.js';
+import { buildMesh, components, dropFlatComponents, finishMesh } from './mesh.js';
 import { segment, demote, mergeSameSurfaces } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
@@ -25,6 +25,11 @@ function prepare(positions, scale, onStatus) {
   if (!mesh.nt) throw new Error('STL vacío o no válido.');
   if (mesh.open || mesh.nonManifold) throw new Error('Se requiere una malla cerrada. Repara el STL antes de convertir.');
   if (mesh.flipped) throw new Error('La malla tiene triángulos con orientación incoherente.');
+  if (mesh.volume < 0) {
+    // Malla con todas las normales hacia dentro: invertir todos los triángulos.
+    const T = mesh.T.slice(); for (let t = 0; t < mesh.nt; t++) { const b = T[t * 3 + 1]; T[t * 3 + 1] = T[t * 3 + 2]; T[t * 3 + 2] = b; }
+    const repairs = mesh.repairs; mesh = finishMesh(mesh.V, T, mesh.dropped); mesh.repairs = { ...(repairs || {}), flipped: true };
+  }
   if (!(mesh.volume > 1e-9 * mesh.diag ** 3)) throw new Error('El STL no encierra un volumen válido.');
   const comp = components(mesh);
   onStatus('Reconociendo superficies…');
