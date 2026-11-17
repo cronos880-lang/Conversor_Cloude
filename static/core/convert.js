@@ -1,11 +1,13 @@
 // Conversión completa: posiciones STL -> texto STEP con superficies analíticas.
 import { buildMesh, components, dropFlatComponents, finishMesh } from './mesh.js';
-import { segment, demote, mergeSameSurfaces } from './segment.js';
+import { segment, demote, mergeSameSurfaces, splitRegion } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate, reexport } from './validate.js';
 import { findExtrusions } from './extrude.js';
 
+// Dividir caras que fallan: desactivado (en el chasis un trozo de toro se interpretaba al revés).
+const SPLIT_FACES = !!globalThis.process?.env?.SPLIT_FACES;
 const EDGE_LIMIT = Number(globalThis.process?.env?.EDGE_LIMIT) || 0.1; // mm (EDGE_LIMIT: solo pruebas)
 
 /** Regiones curvas con alguna arista cuya desviación supera `limit`. */
@@ -120,12 +122,23 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
     let bad = [...check.bad];
     if (!bad.length) bad = seg.prims.map((p, i) => i).filter(i => !(polyFaces.has(i) && seg.prims[i].facet));
     const toDemote = new Set(); let progress = false, neighbours = null;
+    const triCount = new Map(); for (let t = 0; t < mesh.nt; t++) triCount.set(seg.reg[t], (triCount.get(seg.reg[t]) || 0) + 1);
+    const regionTris = r => triCount.get(r) || 0;
     for (const r of bad) {
       const gross = check.gross && check.gross.has(r) && !seg.prims[r].facet && seg.prims[r].S.type !== 'plane';
       // Redondeos pequeños (toros, esferas) defectuosos: facetas directamente. Las superficies
       // grandes solo pasan a facetas tras fallar también con contorno poligonal.
       const small = !seg.prims[r].facet && regionArea[r] < 0.01 * mesh.area && (seg.prims[r].S.type === 'torus' || seg.prims[r].S.type === 'sphere');
-      if (gross || small) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
+      const revol = ['torus', 'cylinder', 'cone'].includes(seg.prims[r].S.type) && !seg.prims[r].facet;
+      if (revol && check.reason.get(r) === 'cara' && !seg.prims[r].seamTried) {
+        // 0.º Costura de la superficie al lado opuesto de la cara (contorno que se cruzaba).
+        seg.prims[r] = { ...seg.prims[r], seamAway: true, seamTried: true }; progress = true;
+      }
+      else if (SPLIT_FACES && revol && check.reason.get(r) === 'cara' && (seg.prims[r].split || 0) < 3 && regionTris(r) >= 40) {
+        // 0.º bis: dividir la cara en partes más simples sobre la misma superficie.
+        splitRegion(mesh, seg, r); progress = true;
+      }
+      else if (gross || small) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
       else if (!polyFaces.has(r)) { polyFaces.add(r); progress = true; }                  // 1.º contorno poligonal
       else if (!seg.prims[r].facet) toDemote.add(r);   // 2.º facetas planas
       else {

@@ -24,7 +24,7 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   for (let h = 0; h < nt * 3; h++) if (boundary(h)) count[T[h]]++;
 
   const visited = new Uint8Array(nt * 3);
-  const faces = prims.map((p, i) => ({ S: p.S, sign: p.sign, loops: [], shell: -1, region: i }));
+  const faces = prims.map((p, i) => ({ S: p.S, sign: p.sign, loops: [], shell: -1, region: i, seamAway: !!p.seamAway }));
   // 1) Topología: cadenas de aristas de malla entre esquinas.
   const chains = [], chainOf = new Map(); // primera semiarista -> { edge, forward }
   const cornerRegions = new Map();

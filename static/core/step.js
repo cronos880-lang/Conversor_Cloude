@@ -44,12 +44,23 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}
     return add_(`EDGE_CURVE('',#${vertexIds[e.v0]},#${vertexIds[e.v1]},#${curve},.T.)`);
   });
 
+  // Costura de las superficies de revolución (ángulo 0) en el lado opuesto a la cara, para que
+  // su contorno no la cruce: dirección radial contraria al centro de los vértices de la cara.
+  const seamAway = (o, a, f) => {
+    let m = [0, 0, 0];
+    for (const loop of f.loops) for (const ref of loop) for (const v of [brep.edges[ref.edge].v0, brep.edges[ref.edge].v1]) {
+      const d = sub(brep.vertices[v], o), r = sub(d, mul(a, dot(d, a))), l = Math.hypot(r[0], r[1], r[2]);
+      if (l > 0) m = add(m, mul(r, 1 / l));
+    }
+    const l = Math.hypot(m[0], m[1], m[2]);
+    return l > 1e-6 ? mul(m, -1 / l) : perp(a);
+  };
   const surface = (S, f) => {
     switch (S.type) {
       case 'plane': { const o = mul(S.n, S.d); return add_(`PLANE('',#${axis2(o, S.n, perp(S.n))})`); }
-      case 'cylinder': return add_(`CYLINDRICAL_SURFACE('',#${axis2(S.p, S.a, perp(S.a))},${num(S.r)})`);
+      case 'cylinder': return add_(`CYLINDRICAL_SURFACE('',#${axis2(S.p, S.a, f.seamAway ? seamAway(S.p, S.a, f) : perp(S.a))},${num(S.r)})`);
       case 'sphere': return add_(`SPHERICAL_SURFACE('',#${axis2(S.c, [0, 0, 1], [1, 0, 0])},${num(S.r)})`);
-      case 'torus': return add_(`TOROIDAL_SURFACE('',#${axis2(S.c, S.a, perp(S.a))},${num(S.R)},${num(S.r)})`);
+      case 'torus': return add_(`TOROIDAL_SURFACE('',#${axis2(S.c, S.a, f.seamAway ? seamAway(S.c, S.a, f) : perp(S.a))},${num(S.R)},${num(S.r)})`);
       case 'extrusion': {
         const c = S.curve, pts = c.ctrl.map(p => '#' + pt(p)).join(',');
         const curve = add_(`B_SPLINE_CURVE_WITH_KNOTS('',${c.degree},(${pts}),.UNSPECIFIED.,.F.,.F.,(${c.mults.join(',')}),(${c.knots.map(num).join(',')}),.UNSPECIFIED.)`);
@@ -60,7 +71,7 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}
         let h = 0;
         for (const loop of f.loops) for (const ref of loop) for (const v of [brep.edges[ref.edge].v0, brep.edges[ref.edge].v1]) h = Math.max(h, dot(sub(brep.vertices[v], S.apex), S.a));
         if (!(h > 0)) h = 1;
-        return add_(`CONICAL_SURFACE('',#${axis2(add(S.apex, mul(S.a, h)), S.a, perp(S.a))},${num(h * Math.tan(S.alpha))},${num(S.alpha)})`);
+        return add_(`CONICAL_SURFACE('',#${axis2(add(S.apex, mul(S.a, h)), S.a, f.seamAway ? seamAway(S.apex, S.a, f) : perp(S.a))},${num(h * Math.tan(S.alpha))},${num(S.alpha)})`);
       }
     }
     throw new Error('Superficie no admitida.');

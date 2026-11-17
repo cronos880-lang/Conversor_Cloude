@@ -632,3 +632,38 @@ export function mergeSameSurfaces(mesh, seg) {
   }
   return merged;
 }
+
+/**
+ * Divide una región en dos (o más) caras sobre la misma superficie, cortando por el plano
+ * medio en la dirección en que la región es más larga. Cada parte conexa pasa a ser una
+ * región propia. Devuelve las regiones nuevas.
+ */
+export function splitRegion(mesh, seg, r) {
+  const { V, T, adj, nt } = mesh, { reg, prims } = seg;
+  const tris = []; for (let t = 0; t < nt; t++) if (reg[t] === r) tris.push(t);
+  if (tris.length < 8) return [];
+  const C = tris.map(t => [0, 1, 2].map(k => (V[T[t * 3] * 3 + k] + V[T[t * 3 + 1] * 3 + k] + V[T[t * 3 + 2] * 3 + k]) / 3));
+  const m = [0, 0, 0]; for (const c of C) for (let k = 0; k < 3; k++) m[k] += c[k] / C.length;
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (const c of C) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) M[i][j] += (c[i] - m[i]) * (c[j] - m[j]);
+  const dir = eigSym3(M).vectors[2];
+  const side = new Map(); tris.forEach((t, i) => side.set(t, (C[i][0] - m[0]) * dir[0] + (C[i][1] - m[1]) * dir[1] + (C[i][2] - m[2]) * dir[2] >= 0 ? 1 : 0));
+  // Partes conexas de cada lado.
+  const seen = new Set(), made = [];
+  let first = true;
+  for (const s of tris) {
+    if (seen.has(s)) continue;
+    const comp = [s]; seen.add(s);
+    for (let i = 0; i < comp.length; i++) for (let k = 0; k < 3; k++) {
+      const h = adj[comp[i] * 3 + k]; if (h < 0) continue;
+      const u = (h / 3) | 0; if (seen.has(u) || !side.has(u) || side.get(u) !== side.get(s)) continue;
+      seen.add(u); comp.push(u);
+    }
+    if (first) { first = false; continue; } // la primera parte conserva la región original
+    const id = prims.length; prims.push({ ...prims[r], seamTried: false, seamAway: false, split: (prims[r].split || 0) + 1 });
+    for (const t of comp) reg[t] = id;
+    made.push(id);
+  }
+  prims[r] = { ...prims[r], seamTried: false, seamAway: false, split: (prims[r].split || 0) + 1 };
+  return made;
+}
