@@ -61,7 +61,43 @@ export function buildMesh(positions, scale = 1) {
   }
   let mesh = finishMesh(new Float64Array(coords), tri.slice(0, nt * 3), dropped);
   if (mesh.open) mesh = repair(mesh);
+  if (!mesh.open && !mesh.nonManifold) mesh = collapseShortEdges(mesh);
   return mesh;
+}
+
+/**
+ * Elimina aristas diminutas (menores que una fracción de la tolerancia de
+ * reconocimiento) uniendo sus dos vértices. Los programas CAD rechazan las
+ * caras y aristas casi nulas que producirían. Si la malla dejara de ser
+ * cerrada, se conserva la original.
+ */
+function collapseShortEdges(mesh, eps = Math.min(0.002, mesh.diag * 1e-4)) {
+  const { V, T, nt, nv } = mesh, parent = new Int32Array(nv);
+  for (let i = 0; i < nv; i++) parent[i] = i;
+  const find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  let merged = 0;
+  for (let h = 0; h < nt * 3; h++) {
+    const a = T[h], b = T[((h / 3) | 0) * 3 + (h % 3 + 1) % 3];
+    if (Math.hypot(V[a * 3] - V[b * 3], V[a * 3 + 1] - V[b * 3 + 1], V[a * 3 + 2] - V[b * 3 + 2]) >= eps) continue;
+    const ra = find(a), rb = find(b); if (ra === rb) continue;
+    parent[rb] = ra; merged++;
+  }
+  if (!merged) return mesh;
+  const out = [], seen = new Map();
+  for (let t = 0; t < nt; t++) {
+    const a = find(T[t * 3]), b = find(T[t * 3 + 1]), c = find(T[t * 3 + 2]);
+    if (a === b || b === c || a === c) continue;
+    out.push([a, b, c]);
+  }
+  // Pares de triángulos opuestos que quedan uno sobre otro se anulan.
+  const key = (a, b, c) => { const m = Math.min(a, b, c); return m === a ? `${a},${b},${c}` : m === b ? `${b},${c},${a}` : `${c},${a},${b}`; };
+  for (const [a, b, c] of out) seen.set(key(a, b, c), (seen.get(key(a, b, c)) || 0) + 1);
+  const T2 = [];
+  for (const [a, b, c] of out) { if (seen.get(key(a, c, b))) continue; T2.push(a, b, c); }
+  const m = finishMesh(V, Int32Array.from(T2), mesh.dropped);
+  if (m.open || m.nonManifold || m.flipped || Math.abs(m.volume - mesh.volume) > 1e-3 * Math.abs(mesh.volume)) return mesh;
+  m.repairs = { ...(mesh.repairs || {}), collapsed: merged };
+  return m;
 }
 
 /** Bordes abiertos: lista de semiaristas sin gemela. */
