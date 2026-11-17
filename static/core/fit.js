@@ -57,6 +57,22 @@ export function eigSym3(m) {
   return { values: order.map(i => a[i][i]), vectors: order.map(i => [v[0][i], v[1][i], v[2][i]]) };
 }
 
+
+/** Punto más cercano del perfil de una superficie extruida: distancia con signo y normal. */
+function extrusionEval(S, x) {
+  const px = dot(x, S.e1), py = dot(x, S.e2), m = S.samples;
+  let best = Infinity, bx = 0, by = 0, tx = 1, ty = 0;
+  for (let i = 0; i + 3 < m.length; i += 2) {
+    const ax = m[i], ay = m[i + 1], dx = m[i + 2] - ax, dy = m[i + 3] - ay, l2 = dx * dx + dy * dy || 1e-300;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+    const qx = ax + t * dx, qy = ay + t * dy, d2 = (px - qx) ** 2 + (py - qy) ** 2;
+    if (d2 < best) { best = d2; bx = qx; by = qy; const l = Math.sqrt(l2); tx = dx / l; ty = dy / l; }
+  }
+  // Normal natural: C'(u) × d, que en el plano del perfil es (ty, -tx).
+  const nx = ty, ny = -tx, n = add(mul(S.e1, nx), mul(S.e2, ny));
+  return { d: (px - bx) * nx + (py - by) * ny, n };
+}
+
 // ---------------------------------------------------------------- distancias
 
 /** Distancia con signo de x a la primitiva (positiva hacia la normal natural). */
@@ -78,6 +94,7 @@ export function dist(S, x) {
       const rho = Math.sqrt(Math.max(0, dot(v, v) - h * h));
       return Math.hypot(rho - S.R, h) - S.r;
     }
+    case 'extrusion': return extrusionEval(S, x).d;
   }
   throw new Error('tipo');
 }
@@ -96,6 +113,7 @@ export function normalAt(S, x) {
       const v = sub(x, S.c), h = dot(v, S.a), radial = sub(v, mul(S.a, h)), rho = norm(radial), rad = unit(radial);
       return unit(add(mul(rad, rho - S.R), mul(S.a, h)));
     }
+    case 'extrusion': return extrusionEval(S, x).n;
   }
   throw new Error('tipo');
 }

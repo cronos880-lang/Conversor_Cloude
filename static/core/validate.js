@@ -12,7 +12,7 @@ export function validate(oc, stepText, brep, regionArea) {
   oc.FS.writeFile('/check.step', stepText);
   const reader = new oc.STEPControl_Reader(), progress = new oc.Message_ProgressRange();
   let shape = null, edgeUse = new Map();
-  const result = { valid: false, volume: 0, area: 0, faces: 0, bad: new Set(), readable: false };
+  const result = { valid: false, volume: 0, area: 0, faces: 0, bad: new Set(), reason: new Map(), readable: false };
   try {
     if (reader.ReadFile('/check.step') !== done || !reader.TransferRoots(progress)) return result;
     shape = reader.OneShape();
@@ -73,13 +73,17 @@ export function validate(oc, stepText, brep, regionArea) {
       if (best < 0) { unmatched.push({ ok, area }); continue; }
       faceRegion[index] = brep.faces[best].region;
       seen[best] = 1; got[best] += area;
-      if (!ok) result.bad.add(brep.faces[best].region);
+      if (!ok) { result.bad.add(brep.faces[best].region); result.reason.set(brep.faces[best].region, 'cara'); }
     }
     ex.delete();
     result.faces = index; result.free = 0;
     for (const list of edgeUse.values()) for (const item of list) if (item.count === 1) {
       result.free++;
-      for (const f of item.faces) if (faceRegion[f] !== undefined) result.bad.add(faceRegion[f]);
+      // Solo se señala la cara más pequeña de las que tocan la arista libre: suele ser la defectuosa,
+      // y así no se degradan superficies grandes sanas.
+      let pick = -1;
+      for (const f of item.faces) if (faceRegion[f] !== undefined && (pick < 0 || regionArea[faceRegion[f]] < regionArea[pick])) pick = faceRegion[f];
+      if (pick >= 0) { result.bad.add(pick); if (!result.reason.has(pick)) result.reason.set(pick, 'libre'); }
     }
     // Las aristas libres solo sirven para localizar caras; la validez la deciden el
     // analizador y el volumen (una envolvente abierta da volumen nulo).
@@ -91,7 +95,7 @@ export function validate(oc, stepText, brep, regionArea) {
     for (const [region, e] of byRegion) {
       const want = regionArea[region];
       if (e.seen && (e.area < 0 || e.area > 2.5 * want + slack)) (result.gross = result.gross || new Set()).add(region);
-      if (!e.seen || Math.abs(e.area - want) > 0.2 * want + slack) { result.bad.add(region); (result.why = result.why || []).push([region, e.seen, +want.toFixed(4), +e.area.toFixed(4)]); }
+      if (!e.seen || Math.abs(e.area - want) > 0.2 * want + slack) { result.bad.add(region); if (!result.reason.has(region)) result.reason.set(region, 'area'); (result.why = result.why || []).push([region, e.seen, +want.toFixed(4), +e.area.toFixed(4)]); }
     }
     result.unmatched = unmatched.length;
     return result;

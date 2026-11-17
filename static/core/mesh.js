@@ -311,3 +311,26 @@ export function components(mesh) {
   }
   return { comp, count };
 }
+
+/**
+ * Quita las componentes sin volumen (p. ej. dos caras coincidentes que forman una
+ * lámina cerrada). No aportan material y no pueden ser un sólido.
+ */
+export function dropFlatComponents(mesh) {
+  const { comp, count } = components(mesh);
+  if (count < 2) return mesh;
+  const { V, T, nt } = mesh, vol = new Float64Array(count), o = mesh.min;
+  for (let t = 0; t < nt; t++) {
+    const a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+    const ax = V[a] - o[0], ay = V[a + 1] - o[1], az = V[a + 2] - o[2], bx = V[b] - o[0], by = V[b + 1] - o[1], bz = V[b + 2] - o[2], cx = V[c] - o[0], cy = V[c + 1] - o[1], cz = V[c + 2] - o[2];
+    vol[comp[t]] += (ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)) / 6;
+  }
+  const flat = new Uint8Array(count); let any = false;
+  for (let c = 0; c < count; c++) if (Math.abs(vol[c]) < 1e-6 * Math.abs(mesh.volume)) { flat[c] = 1; any = true; }
+  if (!any) return mesh;
+  const keep = [];
+  for (let t = 0; t < nt; t++) if (!flat[comp[t]]) keep.push(T[t * 3], T[t * 3 + 1], T[t * 3 + 2]);
+  const m = finishMesh(V, Int32Array.from(keep), mesh.dropped);
+  m.repairs = { ...(mesh.repairs || {}), flat: flat.reduce((s, x) => s + x, 0) };
+  return m;
+}

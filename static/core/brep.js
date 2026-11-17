@@ -97,7 +97,7 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     let fit = null;
     if (!polyFaces.has(A) && !polyFaces.has(B)) { fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null; }
     chainInfo.push({ A: SA.type, B: SB.type, kind: fit ? fit.curve.type : 'poly', n: pts.length, closed, len: +Math.hypot(...pts[0].map((x, i) => x - pts[pts.length - 1][i])).toFixed(3), resA: +(prims[A].res || 0).toExponential(1), resB: +(prims[B].res || 0).toExponential(1) });
-    if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length }); return [edges.length - 1]; }
+    if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length, A, B }); return [edges.length - 1]; }
     // Poligonal: un segmento recto por cada arista de la malla.
     const ids = []; let prev = v0;
     for (let i = 1; i < pts.length; i++) {
@@ -183,7 +183,7 @@ export function buildBrep(mesh, seg, comp, options = {}) {
       f.loops.push([{ edge: ids[0], forward: up }], [{ edge: ids[1], forward: !up }]);
       const g = { S, sign: f.sign, loops: [[{ edge: ids[0], forward: !up }], [{ edge: ids[1], forward: up }]], shell: f.shell, region: f.region };
       shells[f.shell].faces.push(faces.length + extra.length); extra.push(g);
-    } else throw new Error('Superficie sin contorno no admitida.');
+    } else throw new Error('Superficie sin contorno no admitida.' + (globalThis.DEBUG_BREP ? ' ' + JSON.stringify({ type: S.type, region: f.region, shell: f.shell, tris: Array.from(seg.reg).filter(x => x === f.region).length }) : ''));
   }
   void cross;
   return { vertices, edges, faces: faces.concat(extra), shells, chainInfo };

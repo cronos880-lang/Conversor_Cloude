@@ -395,8 +395,10 @@ export function absorbSlivers(mesh, seg) {
       const q = reg[(h / 3) | 0]; if (q === r) continue;
       share.set(q, (share.get(q) || 0) + edge(t, k));
     }
+    // Unir a la vecina con más borde común sobre cuya superficie estén de verdad sus vértices.
+    const fitsOn = q => tris[r].every(t => [0, 1, 2].every(j => { const i = T[t * 3 + j]; return Math.abs(dist(prims[q].S, [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]])) <= tol; }));
     let best = -1, len = 0;
-    for (const [q, l] of share) if (l > len) { len = l; best = q; }
+    for (const [q, l] of share) if (l > len && fitsOn(q)) { len = l; best = q; }
     if (best < 0) continue;
     for (const t of tris[r]) { reg[t] = best; tris[best].push(t); }
     tris[r] = []; merged++;

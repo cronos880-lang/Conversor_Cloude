@@ -1,11 +1,12 @@
 // Conversión completa: posiciones STL -> texto STEP con superficies analíticas.
-import { buildMesh, components } from './mesh.js';
+import { buildMesh, components, dropFlatComponents } from './mesh.js';
 import { segment, demote } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate } from './validate.js';
+import { findExtrusions } from './extrude.js';
 
-const EDGE_LIMIT = 0.03; // mm
+const EDGE_LIMIT = 0.1; // mm
 
 /** Regiones curvas con alguna arista cuya desviación supera `limit`. */
 function looseRegions(brep, prims, limit) {
@@ -19,7 +20,8 @@ function looseRegions(brep, prims, limit) {
 
 function prepare(positions, scale, onStatus) {
   onStatus('Analizando la malla…');
-  const mesh = buildMesh(positions, scale);
+  let mesh = buildMesh(positions, scale);
+  if (!mesh.open && !mesh.nonManifold) mesh = dropFlatComponents(mesh);
   if (!mesh.nt) throw new Error('STL vacío o no válido.');
   if (mesh.open || mesh.nonManifold) throw new Error('Se requiere una malla cerrada. Repara el STL antes de convertir.');
   if (mesh.flipped) throw new Error('La malla tiene triángulos con orientación incoherente.');
@@ -27,6 +29,7 @@ function prepare(positions, scale, onStatus) {
   const comp = components(mesh);
   onStatus('Reconociendo superficies…');
   const seg = segment(mesh);
+  findExtrusions(mesh, seg);
   return { mesh, comp, seg };
 }
 
@@ -58,7 +61,7 @@ export function convert(positions, { scale = 1, name = 'pieza', onStatus = () =>
  * Con una función, en mallas grandes se usa un motor limpio en cada validación,
  * porque leer STEP enormes agota o corrompe la memoria del motor.
  */
-export async function convertValidated(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null } = {}) {
+export async function convertValidated(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null } = {}) {
   const factory = typeof engine === 'function' ? engine : null;
   let oc = factory ? await factory() : engine, fresh = true;
   const check_ = async (step, brep, regionArea) => {
@@ -75,21 +78,22 @@ export async function convertValidated(positions, engine, { scale = 1, name = 'p
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
   // En mallas grandes cada ronda es cara: las caras defectuosas pasan directamente a facetas.
   const big = mesh.nt > 50000;
-  for (; rounds < (big ? 10 : 7); rounds++) {
+  for (; rounds < Math.min(maxRounds, big ? 10 : 7); rounds++) {
     onStatus(rounds ? `Corrigiendo caras problemáticas (intento ${rounds})…` : 'Construyendo el sólido…');
     const t0 = performance.now();
     const out = build(state, name, polyFaces);
     const regionArea = new Float64Array(seg.prims.length);
     for (let t = 0; t < mesh.nt; t++) regionArea[seg.reg[t]] += mesh.A[t];
     onStatus('Comprobando el sólido…');
+    if (dump) dump(rounds, out.step);
     const check = await check_(out.step, out.brep, regionArea);
     // Holguras: una cara curva cuyos bordes se separan de la superficie más de lo que
     // admiten otros programas CAD (Onshape/Parasolid) se trata como defectuosa.
-    for (const r of looseRegions(out.brep, seg.prims, EDGE_LIMIT)) check.bad.add(r);
+    for (const r of looseRegions(out.brep, seg.prims, EDGE_LIMIT)) { check.bad.add(r); if (!check.reason.has(r)) check.reason.set(r, 'holgura'); }
     const volumeOk = Math.abs(check.volume - mesh.volume) <= 0.02 * Math.abs(mesh.volume);
     const areaOk = Math.abs(check.area - mesh.area) <= 0.02 * mesh.area;
     const solid = check.valid && volumeOk && areaOk;
-    if (trace) trace({ round: rounds, ms: Math.round(performance.now() - t0), valid: check.valid, readable: check.readable, faces: check.faces, mine: out.report.faces, unmatched: check.unmatched, free: check.free, bad: [...check.bad].slice(0, 12), nbad: check.bad.size, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), error: check.error, why: (check.why || []).slice(0, 6).map(w => w.concat(seg.prims[w[0]].S.type)) });
+    if (trace) trace({ round: rounds, ms: Math.round(performance.now() - t0), valid: check.valid, readable: check.readable, faces: check.faces, mine: out.report.faces, unmatched: check.unmatched, free: check.free, bad: [...check.bad].slice(0, 12), nbad: check.bad.size, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), error: check.error, why: (check.why || []).slice(0, 6).map(w => w.concat(seg.prims[w[0]].S.type)), kinds: (() => { const k = {}; for (const r of check.bad) { const key = (seg.prims[r].facet ? 'faceta' : seg.prims[r].S.type) + ':' + (check.reason.get(r) || '?'); k[key] = (k[key] || 0) + 1; } return k; })() });
     if (solid && (!good || check.bad.size <= good.check.bad.size)) good = { ...out, check, rounds };
     // Las facetas ya no se pueden degradar más: si solo quedan facetas señaladas en un sólido válido, se acepta.
     const pending = [...check.bad].filter(r => !seg.prims[r].facet);
@@ -100,7 +104,10 @@ export async function convertValidated(positions, engine, { scale = 1, name = 'p
     const toDemote = new Set(); let progress = false, neighbours = null;
     for (const r of bad) {
       const gross = check.gross && check.gross.has(r) && !seg.prims[r].facet && seg.prims[r].S.type !== 'plane';
-      if (gross || (big && !seg.prims[r].facet)) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
+      // Redondeos pequeños (toros, esferas) defectuosos: facetas directamente. Las superficies
+      // grandes solo pasan a facetas tras fallar también con contorno poligonal.
+      const small = !seg.prims[r].facet && regionArea[r] < 0.01 * mesh.area && (seg.prims[r].S.type === 'torus' || seg.prims[r].S.type === 'sphere' || big);
+      if (gross || small) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
       else if (!polyFaces.has(r)) { polyFaces.add(r); progress = true; }                  // 1.º contorno poligonal
       else if (!seg.prims[r].facet) toDemote.add(r);   // 2.º facetas planas
       else {
@@ -125,8 +132,9 @@ export async function convertValidated(positions, engine, { scale = 1, name = 'p
   // Si casi toda la pieza quedó en facetas, las pocas caras curvas restantes dejan
   // holguras en sus bordes que Onshape marca como defectos: mejor todo en facetas exactas.
   if (good) {
-    const facets = seg.prims.filter(p => p.facet).length, curved = good.brep.faces.filter(f => f.loops.length && f.S.type !== 'plane').length;
-    if (curved && facets > 4 * good.report.faces / 5) { fallbackGood = good; good = null; onStatus('Demasiadas zonas sin reconocer: usando caras planas exactas…'); }
+    let facetArea = 0; for (let t = 0; t < mesh.nt; t++) if (seg.prims[seg.reg[t]].facet) facetArea += mesh.A[t];
+    const curved = good.brep.faces.filter(f => f.loops.length && f.S.type !== 'plane').length;
+    if (curved && facetArea > 0.8 * mesh.area) { fallbackGood = good; good = null; onStatus('Demasiadas zonas sin reconocer: usando caras planas exactas…'); }
   }
   if (!good) {
     // Último recurso: todo el sólido con facetas planas (como una conversión facetada clásica).

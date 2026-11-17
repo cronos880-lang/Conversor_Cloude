@@ -50,6 +50,11 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}
       case 'cylinder': return add_(`CYLINDRICAL_SURFACE('',#${axis2(S.p, S.a, perp(S.a))},${num(S.r)})`);
       case 'sphere': return add_(`SPHERICAL_SURFACE('',#${axis2(S.c, [0, 0, 1], [1, 0, 0])},${num(S.r)})`);
       case 'torus': return add_(`TOROIDAL_SURFACE('',#${axis2(S.c, S.a, perp(S.a))},${num(S.R)},${num(S.r)})`);
+      case 'extrusion': {
+        const c = S.curve, pts = c.ctrl.map(p => '#' + pt(p)).join(',');
+        const curve = add_(`B_SPLINE_CURVE_WITH_KNOTS('',${c.degree},(${pts}),.UNSPECIFIED.,.F.,.F.,(${c.mults.join(',')}),(${c.knots.map(num).join(',')}),.UNSPECIFIED.)`);
+        return add_(`SURFACE_OF_LINEAR_EXTRUSION('',#${curve},#${add_(`VECTOR('',#${dir(S.d)},1.)`)})`);
+      }
       case 'cone': {
         // Situar el origen en el extremo ancho de la cara para que el radio sea positivo.
         let h = 0;
