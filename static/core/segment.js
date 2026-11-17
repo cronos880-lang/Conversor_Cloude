@@ -493,6 +493,12 @@ export function absorbSlivers(mesh, seg) {
 export function demote(mesh, seg, regions) {
   const { V, T, N, A, adj, nt } = mesh, { reg, prims } = seg;
   const eps = Math.max(mesh.diag * 1e-6, 1e-7);
+  // Triángulos astilla (casi sin área): se unen a la faceta vecina si se separan menos de
+  // `slack` de su plano; como facetas propias serían caras casi nulas que otros CAD rechazan.
+  const slack = 2e-3, thinTri = t => {
+    let L = 0; for (let k = 0; k < 3; k++) { const a = T[t * 3 + k] * 3, b = T[t * 3 + (k + 1) % 3] * 3; L = Math.max(L, Math.hypot(V[a] - V[b], V[a + 1] - V[b + 1], V[a + 2] - V[b + 2])); }
+    return A[t] < 1e-3 || 2 * A[t] / Math.max(L, 1e-12) < 2 * slack;
+  };
   const pending = new Uint8Array(nt); let n = 0;
   for (let t = 0; t < nt; t++) if (regions.has(reg[t])) { pending[t] = 1; n++; }
   if (!n) return 0;
@@ -512,8 +518,9 @@ export function demote(mesh, seg, regions) {
       for (let k = 0; k < 3; k++) {
         const h = adj[t * 3 + k]; if (h < 0) continue;
         const u = (h / 3) | 0; if (!pending[u]) continue;
-        let ok = N[u * 3] * nx + N[u * 3 + 1] * ny + N[u * 3 + 2] * nz > 0.9999;
-        for (let j = 0; j < 3 && ok; j++) { const i = T[u * 3 + j] * 3; ok = Math.abs(nx * V[i] + ny * V[i + 1] + nz * V[i + 2] - d) <= eps; }
+        const thin = thinTri(u), lim = thin ? slack : eps;
+        let ok = thin || N[u * 3] * nx + N[u * 3 + 1] * ny + N[u * 3 + 2] * nz > 0.9999;
+        for (let j = 0; j < 3 && ok; j++) { const i = T[u * 3 + j] * 3; ok = Math.abs(nx * V[i] + ny * V[i + 1] + nz * V[i + 2] - d) <= lim; }
         if (!ok) continue;
         if (pinches(T, adj, u, t, x => reg[x] === id, vMark, stamp)) { held.push(u); continue; }
         pending[u] = 0; reg[u] = id; stack.push(u); members.push(u);
