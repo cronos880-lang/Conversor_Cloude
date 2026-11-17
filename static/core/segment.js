@@ -44,7 +44,7 @@ export function segment(mesh, options = {}) {
 
   // ---- Facetas coplanarias sobre los triángulos sin región.
   function planeFacets(eps, cosN) {
-    const facet = new Int32Array(nt).fill(-1), list = [], order = [];
+    const facet = new Int32Array(nt).fill(-1), list = [], order = [], vMark = new Int32Array(nv);
     for (let t = 0; t < nt; t++) if (reg[t] < 0) order.push(t);
     order.sort((a, b) => A[b] - A[a]);
     const stack = [];
@@ -53,6 +53,7 @@ export function segment(mesh, options = {}) {
       const nx = N[s * 3], ny = N[s * 3 + 1], nz = N[s * 3 + 2], i0 = T[s * 3] * 3;
       const d = nx * V[i0] + ny * V[i0 + 1] + nz * V[i0 + 2], id = list.length, tris = [s];
       facet[s] = id; stack.push(s);
+      const stamp = ++pinchStamp, held = []; for (let j = 0; j < 3; j++) vMark[T[s * 3 + j]] = stamp;
       while (stack.length) {
         const t = stack.pop();
         for (let k = 0; k < 3; k++) {
@@ -61,8 +62,17 @@ export function segment(mesh, options = {}) {
           for (let j = 0; j < 3 && ok; j++) { const i = T[u * 3 + j] * 3; ok = Math.abs(nx * V[i] + ny * V[i + 1] + nz * V[i + 2] - d) <= eps; }
           if (!ok) continue;
           if (!sliver(u, eps) && N[u * 3] * nx + N[u * 3 + 1] * ny + N[u * 3 + 2] * nz < cosN) continue;
+          if (pinches(T, adj, u, t, x => facet[x] === id, vMark, stamp)) { held.push(u); continue; }
           facet[u] = id; tris.push(u); stack.push(u);
+          for (let j = 0; j < 3; j++) vMark[T[u * 3 + j]] = stamp;
         }
+      }
+      // Triángulos retenidos (frentes que se encuentran en un vértice): se añaden juntos si la
+      // cara final no queda pellizcada.
+      const extra = [...new Set(held)].filter(u => facet[u] < 0);
+      if (extra.length) {
+        for (const u of extra) facet[u] = id;
+        if (hasPinch(T, adj, tris.concat(extra), x => facet[x] === id)) for (const u of extra) facet[u] = -1; else tris.push(...extra);
       }
       list.push({ n: [nx, ny, nz], d, tris });
     }
@@ -379,6 +389,34 @@ export function segment(mesh, options = {}) {
   return seg;
 }
 
+
+/**
+ * ¿Añadir el triángulo u (vecino de t) a la cara haría que su contorno se tocara a sí
+ * mismo en un vértice (forma de ocho)? `inside(x)` dice si un triángulo ya es de la cara
+ * y `vMark[v] === stamp` si un vértice ya lo es.
+ */
+function pinches(T, adj, u, t, inside, vMark, stamp) {
+  for (let k = 0; k < 3; k++) {
+    const h = adj[u * 3 + k]; if (h < 0 || ((h / 3) | 0) !== t) continue;
+    const c = T[u * 3 + (k + 2) % 3];
+    if (vMark[c] !== stamp) return false;
+    for (const e of [(k + 1) % 3, (k + 2) % 3]) { const g = adj[u * 3 + e]; if (g >= 0 && inside((g / 3) | 0)) return false; }
+    return true;
+  }
+  return false;
+}
+let pinchStamp = 0;
+/** ¿Hay algún vértice donde el contorno de la cara (conjunto de triángulos) se toca a sí mismo? */
+function hasPinch(T, adj, tris, inside) {
+  const out = new Map();
+  for (const t of tris) for (let k = 0; k < 3; k++) {
+    const h = adj[t * 3 + k]; if (h >= 0 && inside((h / 3) | 0)) continue;
+    const v = T[t * 3 + k], c = (out.get(v) || 0) + 1; if (c > 1) return true; out.set(v, c);
+  }
+  return false;
+}
+
+
 /** Las regiones formadas solo por triángulos sin anchura se unen a la región vecina. */
 export function absorbSlivers(mesh, seg) {
   const { V, T, A, adj, nt } = mesh, { reg, prims, tol } = seg;
@@ -417,6 +455,7 @@ export function demote(mesh, seg, regions) {
   for (let t = 0; t < nt; t++) if (regions.has(reg[t])) { pending[t] = 1; n++; }
   if (!n) return 0;
   const order = []; for (let t = 0; t < nt; t++) if (pending[t]) order.push(t);
+  const vMark = new Int32Array(mesh.nv);
   order.sort((a, b) => A[b] - A[a]);
   const stack = [];
   for (const s of order) {
@@ -425,6 +464,7 @@ export function demote(mesh, seg, regions) {
     const d = nx * V[i0] + ny * V[i0 + 1] + nz * V[i0 + 2], id = prims.length;
     prims.push({ S: { type: 'plane', n: [nx, ny, nz], d }, sign: 1, res: 0, facet: true });
     pending[s] = 0; reg[s] = id; stack.push(s);
+    const stamp = ++pinchStamp, held = [], members = [s]; for (let j = 0; j < 3; j++) vMark[T[s * 3 + j]] = stamp;
     while (stack.length) {
       const t = stack.pop();
       for (let k = 0; k < 3; k++) {
@@ -433,8 +473,17 @@ export function demote(mesh, seg, regions) {
         let ok = N[u * 3] * nx + N[u * 3 + 1] * ny + N[u * 3 + 2] * nz > 0.9999;
         for (let j = 0; j < 3 && ok; j++) { const i = T[u * 3 + j] * 3; ok = Math.abs(nx * V[i] + ny * V[i + 1] + nz * V[i + 2] - d) <= eps; }
         if (!ok) continue;
-        pending[u] = 0; reg[u] = id; stack.push(u);
+        if (pinches(T, adj, u, t, x => reg[x] === id, vMark, stamp)) { held.push(u); continue; }
+        pending[u] = 0; reg[u] = id; stack.push(u); members.push(u);
+        for (let j = 0; j < 3; j++) vMark[T[u * 3 + j]] = stamp;
       }
+    }
+    const extra = [...new Set(held)].filter(u => pending[u]);
+    if (extra.length) {
+      const keep = extra.map(u => reg[u]);
+      for (const u of extra) reg[u] = id;
+      if (hasPinch(T, adj, members.concat(extra), x => reg[x] === id)) extra.forEach((u, i) => { reg[u] = keep[i]; });
+      else for (const u of extra) pending[u] = 0;
     }
   }
   return regions.size;
