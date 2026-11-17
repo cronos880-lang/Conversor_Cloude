@@ -65,7 +65,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     faces[A].loops.push(refs);
   }
   // 2) Geometría: vértices y puntos intermedios llevados sobre las superficies ajustadas.
-  const maxMove = (Number(globalThis.process?.env?.MOVE) || 4) * tol; // MOVE: solo para pruebas en Node
+  // Ajuste corto: desplazar más los vértices hace que se crucen contornos en piezas finas.
+  const maxMove = (Number(globalThis.process?.env?.MOVE) || 0.25) * tol; // MOVE: solo para pruebas en Node
   const vertices = [], vertexId = new Map();
   const vertexOf = (v0, shell) => {
     const v = v0 + shell * mesh.nv; let id = vertexId.get(v);

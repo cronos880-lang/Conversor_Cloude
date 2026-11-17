@@ -1,5 +1,5 @@
 // Segmentación de la malla en regiones que pertenecen a una misma superficie analítica.
-import { dist, normalAt, refine, fitSphere, fitCylinder, fitCone, fitConeFromNormals, fitTorus, fitPlane, dot, sub, cross, perp, DOF } from './fit.js';
+import { dist, normalAt, refine, fitSphere, fitCylinder, fitCone, fitConeFromNormals, fitTorus, fitPlane, dot, sub, cross, perp, DOF, eigSym3 } from './fit.js';
 
 const RAD = Math.PI / 180;
 const TYPES = ['cylinder', 'cone', 'sphere', 'torus'];
@@ -214,7 +214,17 @@ export function segment(mesh, options = {}) {
     // La curvatura debe apreciarse: flecha de la región varias veces mayor que la tolerancia.
     let extent = 0; for (const p of pts) extent = Math.max(extent, Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1], p[2] - pts[0][2]));
     const sag = r => { const half = Math.min(extent / 2, r); return r - Math.sqrt(r * r - half * half); };
-    if (S.type === 'sphere') return S.r < big && S.r > tol * 5 && sag(S.r) > 4 * tol;
+    if (S.type === 'sphere') {
+      // Una esfera debe curvarse en dos direcciones: las normales se reparten en dos ejes.
+      // Una tira curvada en una sola dirección (redondeo largo) es un cilindro, no una esfera.
+      const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], m = [0, 0, 0]; let w = 0;
+      for (const t of tris) { w += A[t]; for (let i = 0; i < 3; i++) m[i] += A[t] * N[t * 3 + i]; }
+      for (let i = 0; i < 3; i++) m[i] /= w;
+      for (const t of tris) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) M[i][j] += A[t] * (N[t * 3 + i] - m[i]) * (N[t * 3 + j] - m[j]) / w;
+      const ev = eigSym3(M).values;
+      if (!(ev[1] > 0.1 * ev[2])) return false;
+      return S.r < big && S.r > tol * 5 && sag(S.r) > 4 * tol;
+    }
     if (S.type === 'cylinder' && !(sag(S.r) > 4 * tol)) return false;
     const a = S.a, e1 = perp(a), e2 = cross(a, e1), o = S.p || S.apex || S.c;
     const rmin = S.type === 'cylinder' ? S.r : S.type === 'torus' ? S.r : 0;
@@ -487,4 +497,56 @@ export function demote(mesh, seg, regions) {
     }
   }
   return regions.size;
+}
+
+/**
+ * Une regiones vecinas que son la misma superficie (p. ej. un redondeo que salió en
+ * varias tiras): la superficie de la región mayor debe pasar por todos los vértices de
+ * la menor con la misma orientación. Modifica `seg` y devuelve cuántas uniones hizo.
+ */
+export function mergeSameSurfaces(mesh, seg) {
+  const { V, T, A, adj, nt } = mesh, { reg, prims, tol } = seg;
+  const R = prims.length, area = new Float64Array(R), tris = prims.map(() => []);
+  for (let t = 0; t < nt; t++) { area[reg[t]] += A[t]; tris[reg[t]].push(t); }
+  const parent = Int32Array.from({ length: R }, (_, i) => i);
+  const find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const same = (a, b) => {
+    const Sa = prims[a].S, Sb = prims[b].S;
+    if (Sa.type !== Sb.type || Sa.type === 'extrusion' || prims[a].facet || prims[b].facet) return false;
+    if (Sa.type === 'plane') { if (Sa.n[0] * Sb.n[0] + Sa.n[1] * Sb.n[1] + Sa.n[2] * Sb.n[2] < 0.9999) return false; }
+    else if (prims[a].sign !== prims[b].sign) return false;
+    // Cada región sobre la superficie de la otra.
+    const on = (S, r) => tris[r].every(t => [0, 1, 2].every(j => { const i = T[t * 3 + j]; return Math.abs(dist(S, [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]])) <= tol; }));
+    if (on(Sa, b) && on(Sb, a)) return true;
+    if (Sa.type === 'plane') return false;
+    // Ajuste común: partir de la superficie de la región mayor y reajustar con ambas.
+    const big = area[a] >= area[b] ? a : b, set = new Set();
+    for (const r of [a, b]) for (const t of tris[r]) for (let j = 0; j < 3; j++) set.add(T[t * 3 + j]);
+    let pts = [...set].map(i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]]);
+    const sample = pts.length > 400 ? pts.filter((_, i) => i % Math.ceil(pts.length / 400) === 0) : pts;
+    const S = refine(prims[big].S, sample, mesh.diag);
+    if (!pts.every(p => Math.abs(dist(S, p)) <= tol)) return false;
+    refit.set(big, S);
+    return true;
+  };
+  const refit = new Map();
+  const tried = new Set(); let merged = 0;
+  for (let h = 0; h < nt * 3; h++) {
+    if (adj[h] < 0) continue;
+    const a = reg[(h / 3) | 0], b = reg[(adj[h] / 3) | 0];
+    if (a === b) continue;
+    const key = a < b ? a * R + b : b * R + a;
+    if (tried.has(key)) continue; tried.add(key);
+    const ra = find(a), rb = find(b); if (ra === rb) continue;
+    if (!same(a, b)) continue;
+    // La región grande conserva su superficie.
+    const keep = area[ra] >= area[rb] ? ra : rb, gone = keep === ra ? rb : ra;
+    parent[gone] = keep; area[keep] += area[gone];
+    const big = area[a] >= area[b] ? a : b;
+    if (refit.has(big)) { prims[keep] = { ...prims[keep], S: refit.get(big) }; refit.delete(big); }
+    tris[keep] = tris[keep].concat(tris[gone]);
+    merged++;
+  }
+  if (merged) for (let t = 0; t < nt; t++) reg[t] = find(reg[t]);
+  return merged;
 }

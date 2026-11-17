@@ -1,6 +1,6 @@
 // Conversión completa: posiciones STL -> texto STEP con superficies analíticas.
 import { buildMesh, components, dropFlatComponents } from './mesh.js';
-import { segment, demote } from './segment.js';
+import { segment, demote, mergeSameSurfaces } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate } from './validate.js';
@@ -29,7 +29,9 @@ function prepare(positions, scale, onStatus) {
   const comp = components(mesh);
   onStatus('Reconociendo superficies…');
   const seg = segment(mesh);
+  mergeSameSurfaces(mesh, seg);
   findExtrusions(mesh, seg);
+  mergeSameSurfaces(mesh, seg);
   return { mesh, comp, seg };
 }
 
@@ -117,7 +119,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
       const gross = check.gross && check.gross.has(r) && !seg.prims[r].facet && seg.prims[r].S.type !== 'plane';
       // Redondeos pequeños (toros, esferas) defectuosos: facetas directamente. Las superficies
       // grandes solo pasan a facetas tras fallar también con contorno poligonal.
-      const small = !seg.prims[r].facet && regionArea[r] < 0.01 * mesh.area && (seg.prims[r].S.type === 'torus' || seg.prims[r].S.type === 'sphere' || big);
+      const small = !seg.prims[r].facet && regionArea[r] < 0.01 * mesh.area && (seg.prims[r].S.type === 'torus' || seg.prims[r].S.type === 'sphere');
       if (gross || small) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
       else if (!polyFaces.has(r)) { polyFaces.add(r); progress = true; }                  // 1.º contorno poligonal
       else if (!seg.prims[r].facet) toDemote.add(r);   // 2.º facetas planas
@@ -134,6 +136,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
       }
     }
     if (toDemote.size) {
+      if (trace) { const cnt = new Map(); for (let t = 0; t < mesh.nt; t++) if (toDemote.has(seg.reg[t])) cnt.set(seg.reg[t], (cnt.get(seg.reg[t]) || 0) + 1); trace({ degradadas: [...cnt].map(([r, n]) => `${seg.prims[r].S.type}:${n}tri:${(check.reason.get(r) || '')}`) }); }
       progress = true; demoted += demote(mesh, seg, toDemote);
       for (let i = 0; i < seg.prims.length; i++) if (seg.prims[i].facet) polyFaces.add(i);
     }

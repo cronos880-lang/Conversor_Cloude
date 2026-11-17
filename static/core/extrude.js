@@ -1,6 +1,6 @@
 // Superficies extruidas: cadenas de franjas planas, paralelas a una dirección, que juntas
 // forman un perfil curvo suave (flancos de engranajes, perfiles de levas, contornos libres).
-import { dot, cross, unit, perp, normalAt, dist } from './fit.js';
+import { dot, cross, unit, perp, normalAt, dist, fitCircle2D } from './fit.js';
 
 const RAD = Math.PI / 180;
 
@@ -128,6 +128,17 @@ export function findExtrusions(mesh, seg) {
         total += ang;
       }
       if (!ok || total < 10 * RAD) continue;
+      // Perfil en arco de circunferencia: es un cilindro, no una extrusión libre.
+      const circ = fitCircle2D(profile);
+      if (circ && profile.every(p => Math.abs(Math.hypot(p[0] - circ[0], p[1] - circ[1]) - circ[2]) <= tol)) {
+        const c3 = [e1[0] * circ[0] + e2[0] * circ[1], e1[1] * circ[0] + e2[1] * circ[1], e1[2] * circ[0] + e2[2] * circ[1]];
+        const C = { type: 'cylinder', p: c3, a: d, r: circ[2] };
+        let s2 = 0;
+        for (const r of chain) for (const t of tris[r]) { const c = [0, 1, 2].map(k => (V[T[t * 3] * 3 + k] + V[T[t * 3 + 1] * 3 + k] + V[T[t * 3 + 2] * 3 + k]) / 3); s2 += A[t] * dot([N[t * 3], N[t * 3 + 1], N[t * 3 + 2]], normalAt(C, c)); }
+        const r0 = chain[0]; prims[r0] = { S: C, sign: s2 >= 0 ? 1 : -1, res: 0 };
+        for (const r of chain) { used[r] = 1; if (r !== r0) for (const t of tris[r]) reg[t] = r0; }
+        made++; continue;
+      }
       const sp = spline2(profile);
       // La curva no puede separarse de las franjas (cuerdas del perfil): si no, el perfil
       // no es una curva suave sino un polígono con caras planas de verdad.
