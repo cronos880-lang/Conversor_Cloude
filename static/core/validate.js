@@ -11,10 +11,11 @@ export function validate(oc, stepText, brep, regionArea) {
   const E = oc.TopAbs_ShapeEnum, done = oc.IFSelect_ReturnStatus.IFSelect_RetDone;
   oc.FS.writeFile('/check.step', stepText);
   const reader = new oc.STEPControl_Reader(), progress = new oc.Message_ProgressRange();
+  let shape = null, edgeUse = new Map();
   const result = { valid: false, volume: 0, area: 0, faces: 0, bad: new Set(), readable: false };
   try {
     if (reader.ReadFile('/check.step') !== done || !reader.TransferRoots(progress)) return result;
-    const shape = reader.OneShape();
+    shape = reader.OneShape();
     result.readable = true;
     const check = new oc.BRepCheck_Analyzer(shape, true, false, false);
     result.valid = check.IsValid(); check.delete();
@@ -30,22 +31,23 @@ export function validate(oc, stepText, brep, regionArea) {
     } });
     const got = new Float64Array(brep.faces.length), seen = new Uint8Array(brep.faces.length);
     // Aristas libres: las que solo usa una cara indican que la envolvente no cierra.
-    const edgeUse = new Map(); // hash -> [{ edge, count, faces }]
+    edgeUse = new Map(); // hash -> [{ edge, count, faces }]
     const useEdge = (edge, faceIndex, reversedFace) => {
-      if (oc.BRep_Tool.Degenerated(oc.TopoDS.Edge(edge))) return;
+      const asEdge = oc.TopoDS.Edge(edge), degenerated = oc.BRep_Tool.Degenerated(asEdge); asEdge.delete();
+      if (degenerated) { edge.delete(); return; }
       const ends = []; const ev = new oc.TopExp_Explorer(edge, E.TopAbs_VERTEX, E.TopAbs_SHAPE);
-      for (; ev.More(); ev.Next()) { const p = oc.BRep_Tool.Pnt(oc.TopoDS.Vertex(ev.Current())); ends.push(key([p.X(), p.Y(), p.Z()])); p.delete(); }
+      for (; ev.More(); ev.Next()) { const cur = ev.Current(), vert = oc.TopoDS.Vertex(cur), p = oc.BRep_Tool.Pnt(vert); ends.push(key([p.X(), p.Y(), p.Z()])); p.delete(); vert.delete(); cur.delete(); }
       ev.delete();
       const h = ends.sort().join('|'); let list = edgeUse.get(h); if (!list) edgeUse.set(h, list = []);
       const o = edge.Orientation().value; void reversedFace;
-      for (const item of list) if (item.edge.IsSame(edge)) { item.count++; item.faces.add(faceIndex); item.orients.push(o); return; }
+      for (const item of list) if (item.edge.IsSame(edge)) { item.count++; item.faces.add(faceIndex); item.orients.push(o); edge.delete(); return; }
       list.push({ edge, count: 1, faces: new Set([faceIndex]), orients: [o] });
     };
     const faceRegion = [];
     const ex = new oc.TopExp_Explorer(shape, E.TopAbs_FACE, E.TopAbs_SHAPE);
     let index = 0; const unmatched = [];
     for (; ex.More(); ex.Next(), index++) {
-      const face = oc.TopoDS.Face(ex.Current());
+      const curFace = ex.Current(), face = oc.TopoDS.Face(curFace); curFace.delete();
       const g = new oc.GProp_GProps(); oc.BRepGProp.SurfaceProperties(face, g, false, false);
       const area = g.Mass(); g.delete();
       const fc = new oc.BRepCheck_Analyzer(face, true, false, false), ok = fc.IsValid(); fc.delete();
@@ -56,11 +58,11 @@ export function validate(oc, stepText, brep, regionArea) {
       const votes = new Map(); let nv = 0;
       const vx = new oc.TopExp_Explorer(face, E.TopAbs_VERTEX, E.TopAbs_SHAPE);
       for (; vx.More(); vx.Next()) {
-        const p = oc.BRep_Tool.Pnt(oc.TopoDS.Vertex(vx.Current())); nv++;
+        const cur = vx.Current(), vert = oc.TopoDS.Vertex(cur), p = oc.BRep_Tool.Pnt(vert); vert.delete(); cur.delete(); nv++;
         const set = vertexFaces.get(key([p.X(), p.Y(), p.Z()])); p.delete();
         if (set) for (const i of set) votes.set(i, (votes.get(i) || 0) + 1);
       }
-      vx.delete();
+      vx.delete(); face.delete();
       let best = -1, score = 0, tie = false;
       for (const [i, c] of votes) { if (c > score) { best = i; score = c; tie = false; } else if (c === score) tie = true; }
       if (tie) {
@@ -73,14 +75,14 @@ export function validate(oc, stepText, brep, regionArea) {
       seen[best] = 1; got[best] += area;
       if (!ok) result.bad.add(brep.faces[best].region);
     }
-    shape.delete();
     ex.delete();
     result.faces = index; result.free = 0;
     for (const list of edgeUse.values()) for (const item of list) if (item.count === 1) {
       result.free++;
       for (const f of item.faces) if (faceRegion[f] !== undefined) result.bad.add(faceRegion[f]);
     }
-    if (result.free) result.valid = false;
+    // Las aristas libres solo sirven para localizar caras; la validez la deciden el
+    // analizador y el volumen (una envolvente abierta da volumen nulo).
     // Área por región (las dos mitades de una esfera o toro completos comparten región).
     let total = 0; for (const a of regionArea) total += a;
     const slack = 5e-4 * total + 0.02;
@@ -97,6 +99,8 @@ export function validate(oc, stepText, brep, regionArea) {
     result.error = typeof error === 'number' ? 'excepción del motor CAD' : String(error.message || error);
     return result;
   } finally {
+    for (const list of edgeUse.values()) for (const item of list) item.edge.delete();
+    if (shape) shape.delete();
     reader.delete(); progress.delete();
     try { oc.FS.unlink('/check.step'); } catch { /* ya eliminado */ }
   }

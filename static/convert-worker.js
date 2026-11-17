@@ -20,8 +20,10 @@ self.onmessage = async ({ data }) => {
     const positions = new Float32Array(data.positions);
     if (!positions.length || positions.length % 9 || positions.length > MAX_TRIANGLES * 9) throw new Error(`STL vacío o superior a ${MAX_TRIANGLES.toLocaleString('es-ES')} triángulos.`);
     self.postMessage({ status: 'Cargando el motor CAD (22 MB la primera vez)…' });
-    const oc = await initOpenCascade({ locateFile: () => new URL('./vendor/replicad_single.wasm', import.meta.url).href, print: () => {}, printErr: () => {} });
-    const result = convertValidated(positions, oc, { scale, name: data.name || 'pieza', onStatus: status => self.postMessage({ status }) });
+    // El WebAssembly se compila una vez; cada motor nuevo reutiliza el módulo compilado.
+    const wasm = await WebAssembly.compileStreaming(fetch(new URL('./vendor/replicad_single.wasm', import.meta.url)));
+    const engine = () => initOpenCascade({ instantiateWasm: (imports, done) => { WebAssembly.instantiate(wasm, imports).then(i => done(i, wasm)); return {}; }, print: () => {}, printErr: () => {} });
+    const result = await convertValidated(positions, engine, { scale, name: data.name || 'pieza', onStatus: status => self.postMessage({ status }) });
     const bytes = new TextEncoder().encode(result.step);
     self.postMessage({ result: bytes.buffer, summary: summary(result.report), report: result.report }, [bytes.buffer]);
   } catch (error) {

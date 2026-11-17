@@ -11,8 +11,8 @@ for (const f of fs.readdirSync(dir).filter(f => /\.stl$/i.test(f) && (!only || f
   total++; const name = f.replace(/\.stl$/i, ''); const buf = fs.readFileSync(path.join(dir, f));
   let line = name.slice(0, 30).padEnd(30);
   try {
-    const oc = await newOc(); const t0 = performance.now();
-    const r = convertValidated(parseSTL(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)), oc, { name });
+    const oc = newOc; const t0 = performance.now();
+    const r = await convertValidated(parseSTL(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)), oc, { name });
     const s = (performance.now() - t0) / 1000; const file = path.join(out, name + '.step'); fs.writeFileSync(file, r.step);
     const rep = r.report; const ty = rep.types, cu = rep.curves;
     line += ` tri=${String(rep.triangles).padStart(6)} caras=${String(rep.faces).padStart(5)} [pl ${ty.plane || 0} ci ${ty.cylinder || 0} co ${ty.cone || 0} es ${ty.sphere || 0} to ${ty.torus || 0}] spl=${cu.bspline || 0} poli=${cu.poly || 0} rondas=${rep.rounds} degr=${rep.demoted} dev=${rep.edgeDeviation.toExponential(0)} ${s.toFixed(1)}s ${(r.step.length / 1024) | 0}KB`;

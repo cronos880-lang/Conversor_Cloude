@@ -39,7 +39,7 @@ const cases = [
 let failed = 0;
 for (const [name, tris, want] of cases) {
   try {
-    const r = convertValidated(flat(tris), await newOc(), { scale: want.scale || 1, name });
+    const r = await convertValidated(flat(tris), await newOc(), { scale: want.scale || 1, name });
     const rep = r.report, errs = [];
     if (rep.faces !== want.faces) errs.push(`caras ${rep.faces} ≠ ${want.faces}`);
     for (const k of Object.keys(want.types)) if (rep.types[k] !== want.types[k]) errs.push(`${k} ${rep.types[k]} ≠ ${want.types[k]}`);
@@ -49,6 +49,6 @@ for (const [name, tris, want] of cases) {
     if (errs.length) failed++;
   } catch (e) { console.log('FALLA', name, e.message || e); failed++; }
 }
-try { convertValidated(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), await newOc(), {}); console.log('FALLA triángulo suelto: debía rechazarse'); failed++; } catch { console.log('PASA  rechazo de malla abierta no reparable'); }
+try { await convertValidated(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), await newOc(), {}); console.log('FALLA triángulo suelto: debía rechazarse'); failed++; } catch { console.log('PASA  rechazo de malla abierta no reparable'); }
 console.log(failed ? `${failed} pruebas fallidas` : 'Todas las pruebas superadas');
 process.exit(failed ? 1 : 0);

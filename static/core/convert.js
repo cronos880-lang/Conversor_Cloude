@@ -53,18 +53,36 @@ export function convert(positions, { scale = 1, name = 'pieza', onStatus = () =>
  * primero a contornos poligonales y después a facetas planas, hasta obtener un
  * sólido válido que conserva el volumen.
  */
-export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null } = {}) {
+/**
+ * `engine` es el motor Open CASCADE o una función que devuelve uno nuevo (promesa).
+ * Con una función, en mallas grandes se usa un motor limpio en cada validación,
+ * porque leer STEP enormes agota o corrompe la memoria del motor.
+ */
+export async function convertValidated(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null } = {}) {
+  const factory = typeof engine === 'function' ? engine : null;
+  let oc = factory ? await factory() : engine, fresh = true;
+  const check_ = async (step, brep, regionArea) => {
+    if (factory && !fresh) { onStatus('Preparando el motor CAD…'); oc = await factory(); }
+    fresh = false;
+    const r = validate(oc, step, brep, regionArea);
+    // Tras un fallo interno el motor queda inutilizable: pedir uno nuevo la próxima vez.
+    if (!factory || !(r.error || mesh_.nt > 50000)) fresh = true;
+    return r;
+  };
+  let mesh_ = { nt: 0 };
   const state = prepare(positions, scale, onStatus);
-  const { mesh, seg } = state;
+  const { mesh, seg } = state; mesh_ = mesh;
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
-  for (; rounds < 7; rounds++) {
+  // En mallas grandes cada ronda es cara: las caras defectuosas pasan directamente a facetas.
+  const big = mesh.nt > 50000;
+  for (; rounds < (big ? 10 : 7); rounds++) {
     onStatus(rounds ? `Corrigiendo caras problemáticas (intento ${rounds})…` : 'Construyendo el sólido…');
     const t0 = performance.now();
     const out = build(state, name, polyFaces);
     const regionArea = new Float64Array(seg.prims.length);
     for (let t = 0; t < mesh.nt; t++) regionArea[seg.reg[t]] += mesh.A[t];
     onStatus('Comprobando el sólido…');
-    const check = validate(oc, out.step, out.brep, regionArea);
+    const check = await check_(out.step, out.brep, regionArea);
     // Holguras: una cara curva cuyos bordes se separan de la superficie más de lo que
     // admiten otros programas CAD (Onshape/Parasolid) se trata como defectuosa.
     for (const r of looseRegions(out.brep, seg.prims, EDGE_LIMIT)) check.bad.add(r);
@@ -73,14 +91,16 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
     const solid = check.valid && volumeOk && areaOk;
     if (trace) trace({ round: rounds, ms: Math.round(performance.now() - t0), valid: check.valid, readable: check.readable, faces: check.faces, mine: out.report.faces, unmatched: check.unmatched, free: check.free, bad: [...check.bad].slice(0, 12), nbad: check.bad.size, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), error: check.error, why: (check.why || []).slice(0, 6).map(w => w.concat(seg.prims[w[0]].S.type)) });
     if (solid && (!good || check.bad.size <= good.check.bad.size)) good = { ...out, check, rounds };
-    if (solid && !check.bad.size) break;
+    // Las facetas ya no se pueden degradar más: si solo quedan facetas señaladas en un sólido válido, se acepta.
+    const pending = [...check.bad].filter(r => !seg.prims[r].facet);
+    if (solid && !pending.length) { if (!good || good.check.bad.size) good = { ...out, check, rounds }; break; }
     // Caras a degradar: las señaladas o, si el fallo es global, todas las que aún no son facetas.
     let bad = [...check.bad];
     if (!bad.length) bad = seg.prims.map((p, i) => i).filter(i => !(polyFaces.has(i) && seg.prims[i].facet));
     const toDemote = new Set(); let progress = false, neighbours = null;
     for (const r of bad) {
       const gross = check.gross && check.gross.has(r) && !seg.prims[r].facet && seg.prims[r].S.type !== 'plane';
-      if (gross) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
+      if (gross || (big && !seg.prims[r].facet)) { polyFaces.add(r); toDemote.add(r); }                                    // área disparatada: facetas ya
       else if (!polyFaces.has(r)) { polyFaces.add(r); progress = true; }                  // 1.º contorno poligonal
       else if (!seg.prims[r].facet) toDemote.add(r);   // 2.º facetas planas
       else {
@@ -116,7 +136,7 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
     const out = build(state, name, every);
     const regionArea = new Float64Array(seg.prims.length);
     for (let t = 0; t < mesh.nt; t++) regionArea[seg.reg[t]] += mesh.A[t];
-    const check = validate(oc, out.step, out.brep, regionArea);
+    const check = await check_(out.step, out.brep, regionArea);
     if (trace) trace({ round: 'facetas', valid: check.valid, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), nbad: check.bad.size, error: check.error });
     if (check.valid && Math.abs(check.volume - mesh.volume) <= 0.02 * Math.abs(mesh.volume)) good = { ...out, check, rounds };
   }
