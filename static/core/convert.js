@@ -5,6 +5,18 @@ import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate } from './validate.js';
 
+const EDGE_LIMIT = 0.03; // mm
+
+/** Regiones curvas con alguna arista cuya desviación supera `limit`. */
+function looseRegions(brep, prims, limit) {
+  const out = new Set();
+  for (const f of brep.faces) {
+    if (f.S.type === 'plane' || prims[f.region].facet) continue;
+    if (f.loops.some(loop => loop.some(ref => brep.edges[ref.edge].dev > limit))) out.add(f.region);
+  }
+  return out;
+}
+
 function prepare(positions, scale, onStatus) {
   onStatus('Analizando la malla…');
   const mesh = buildMesh(positions, scale);
@@ -53,6 +65,9 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
     for (let t = 0; t < mesh.nt; t++) regionArea[seg.reg[t]] += mesh.A[t];
     onStatus('Comprobando el sólido…');
     const check = validate(oc, out.step, out.brep, regionArea);
+    // Holguras: una cara curva cuyos bordes se separan de la superficie más de lo que
+    // admiten otros programas CAD (Onshape/Parasolid) se trata como defectuosa.
+    for (const r of looseRegions(out.brep, seg.prims, EDGE_LIMIT)) check.bad.add(r);
     const volumeOk = Math.abs(check.volume - mesh.volume) <= 0.02 * Math.abs(mesh.volume);
     const areaOk = Math.abs(check.area - mesh.area) <= 0.02 * mesh.area;
     const solid = check.valid && volumeOk && areaOk;
