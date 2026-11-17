@@ -8,7 +8,7 @@ const st = {};
 for (const c of r.brep.chainInfo) { const k = `${c.A}/${c.B} ${c.kind}`; (st[k] = st[k] || []).push(c); }
 const edgeDev = new Map(); r.brep.edges.forEach(e => {});
 for (const [k, list] of Object.entries(st)) console.log(k.padEnd(32), list.length);
-const bad = r.brep.edges.filter(e => !e.poly && e.dev > 0.1).sort((a, b) => b.dev - a.dev).slice(0, 6);
+const bad = r.brep.edges.filter(e => !e.poly && e.dev > +(process.env.DEV || 0.1)).sort((a, b) => b.dev - a.dev).slice(0, 6);
 for (const e of bad) console.log('dev', e.dev.toFixed(3), e.curve.type, 'n', e.n, r.brep.vertices[e.v0].map(x => +x.toFixed(2)).join(','), '->', r.brep.vertices[e.v1].map(x => +x.toFixed(2)).join(','));
 import { dist } from '../static/core/fit.js';
 for (const e of bad) {

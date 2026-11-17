@@ -6,7 +6,7 @@ import { writeStep } from './step.js';
 import { validate, reexport } from './validate.js';
 import { findExtrusions } from './extrude.js';
 
-const EDGE_LIMIT = 0.1; // mm
+const EDGE_LIMIT = Number(globalThis.process?.env?.EDGE_LIMIT) || 0.1; // mm (EDGE_LIMIT: solo pruebas)
 
 /** Regiones curvas con alguna arista cuya desviación supera `limit`. */
 function looseRegions(brep, prims, limit) {

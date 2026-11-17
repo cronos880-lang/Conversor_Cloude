@@ -1,5 +1,5 @@
 // Ajuste de curvas a las cadenas de aristas que separan dos superficies.
-import { dist, normalAt, fitPlane, fitCircle2D, dot, sub, add, mul, cross, unit, norm, perp, solve } from './fit.js';
+import { dist, normalAt, project, fitPlane, fitCircle2D, dot, sub, add, mul, cross, unit, norm, perp, solve } from './fit.js';
 
 /** Lleva x a la intersección de las superficies A y B (iteración de Newton). */
 export function toIntersection(x, A, B, iterations = 12) {
@@ -69,6 +69,17 @@ function circleFit(pts, closed, tol) {
   const axis = sign > 0 ? nrm : mul(nrm, -1);
   const center = add(o, add(mul(e1, c[0]), mul(e2, c[1])));
   return { type: 'circle', c: center, a: axis, x: unit(sub(first, center)), r: c[2], sweep: Math.abs(total) };
+}
+
+
+/** Punto común a A y B también cuando son tangentes (proyecciones alternadas). */
+function onIntersection(x, A, B) {
+  let q = toIntersection(x, A, B);
+  const err = p => Math.max(Math.abs(dist(A, p)), Math.abs(dist(B, p)));
+  if (q.every(Number.isFinite) && err(q) < 1e-7) return q;
+  q = x;
+  for (let it = 0; it < 40 && err(q) > 1e-7; it++) q = project(B, project(A, q));
+  return q;
 }
 
 /** Punto de una curva analítica en el parámetro angular t (para muestrear). */
@@ -160,7 +171,18 @@ export function fitCurve(pts, closed, A, B, tol) {
     curve = lineFit(pts, tol);
     if (curve) {
       for (let i = 0; i + 1 < pts.length; i++) dev = Math.max(dev, onBoth(mul(add(pts[i], pts[i + 1]), 0.5)));
-      if (dev <= 4 * tol || pts.length === 2) return { curve, dev, ok: true };
+      if (dev <= 4 * tol) return { curve, dev, ok: true };
+      if (pts.length === 2) {
+        // Tramo de dos puntos sobre una superficie curva: puntos intermedios de la intersección real.
+        const dense = [pts[0]];
+        for (let k = 1; k < 8; k++) {
+          const q = onIntersection(add(mul(pts[0], 1 - k / 8), mul(pts[1], k / 8)), A, B);
+          if (!(onBoth(q) < 1e-6) || norm(sub(q, pts[0])) > 2 * norm(sub(pts[1], pts[0]))) return { curve, dev, ok: true };
+          dense.push(q);
+        }
+        dense.push(pts[1]);
+        return fitCurve(dense, false, A, B, tol);
+      }
       curve = null;
     }
   }
@@ -182,12 +204,12 @@ export function fitCurve(pts, closed, A, B, tol) {
     curve = splineFit(P, closed, A, B);
     dev = 0; const mids = [];
     for (let i = 0; i + 1 < P.length; i++) { const m = splineMid(curve, i); mids.push(m); dev = Math.max(dev, onBoth(m)); }
-    if (!ok || dev < 1e-5 || round === 3 || P.length > 1500) break;
+    if (!ok || dev < 1e-5 || round === 6 || P.length > 3000) break;
     const next = [P[0]]; let moved = false;
     for (let i = 0; i + 1 < P.length; i++) {
       if (onBoth(mids[i]) > 1e-5) {
-        const q = toIntersection(mids[i], A, B);
-        if (onBoth(q) < 1e-7 && norm(sub(q, mids[i])) < 0.3 * norm(sub(P[i + 1], P[i]))) { next.push(q); moved = true; }
+        const q = onIntersection(mids[i], A, B);
+        if (onBoth(q) < 1e-6 && norm(sub(q, mids[i])) < 0.3 * norm(sub(P[i + 1], P[i]))) { next.push(q); moved = true; }
       }
       next.push(P[i + 1]);
     }

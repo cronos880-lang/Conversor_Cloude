@@ -1,0 +1,37 @@
+CONVERSOR 3D · STL -> STEP  (versión descargable)
+=================================================
+
+Qué es
+------
+La misma aplicación que la web de pruebas, para usarla sin conexión en tu equipo.
+Convierte un STL en un STEP con caras reales (planos, cilindros, conos, esferas,
+toros y superficies extruidas) que se puede editar en Onshape u otros programas CAD.
+Todo ocurre en tu equipo: ningún archivo sale de él.
+
+Cómo se usa (Windows)
+---------------------
+1. Extrae TODO el ZIP en una carpeta (no lo abras desde dentro del ZIP).
+2. Haz doble clic en  Iniciar_Conversor.bat
+3. Se abre una ventana negra y, después, el navegador con el conversor.
+4. Abre tu STL, elige las unidades y pulsa "Convertir y descargar STEP".
+5. Para terminar, cierra el navegador y la ventana negra.
+
+No instala nada ni necesita Python. Usa PowerShell, que viene con Windows.
+Si Windows avisa de que el archivo procede de Internet, elige "Más información" ->
+"Ejecutar de todas formas" (o en Propiedades del ZIP marca "Desbloquear" antes de extraer).
+
+Linux o macOS
+-------------
+Ejecuta  ./iniciar_conversor.sh  (necesita python3) y abre http://localhost:8765/
+
+Requisitos
+----------
+- Un navegador actual (Edge, Chrome o Firefox).
+- Memoria: piezas de más de 100.000 triángulos pueden tardar 1-2 minutos y usar
+  bastante memoria del navegador.
+
+Límites
+-------
+No reconstruye el historial paramétrico ni las cotas. Las zonas que no se reconocen
+(formas libres, mallas con mucho ruido o muy pocas facetas) quedan con caras planas.
+Cada STEP se comprueba con Open CASCADE antes de descargarse.

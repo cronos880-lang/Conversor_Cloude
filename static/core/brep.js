@@ -66,7 +66,9 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   }
   // 2) Geometría: vértices y puntos intermedios llevados sobre las superficies ajustadas.
   // Ajuste corto: desplazar más los vértices hace que se crucen contornos en piezas finas.
-  const maxMove = (Number(globalThis.process?.env?.MOVE) || 0.25) * tol; // MOVE: solo para pruebas en Node
+  const envNum = k => Number(globalThis.process?.env?.[k]) || 0; // solo para pruebas en Node
+  const maxMove = (envNum('MOVE') || 0.25) * tol;          // esquinas
+  const maxEdgeMove = (envNum('MOVEE') || 0.25) * tol;     // puntos intermedios de las aristas
   const vertices = [], vertexId = new Map();
   const vertexOf = (v0, shell) => {
     const v = v0 + shell * mesh.nv; let id = vertexId.get(v);
@@ -90,8 +92,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
       const p = P(v);
       // Intersección transversal: el punto exacto común; tangente: punto intermedio.
       const transversal = normV(crossV(normalAt(SA, p), normalAt(SB, p))) > 0.12;
-      const q = transversal ? toIntersection(p, SA, SB) : snapPoint(p, [SA, SB], maxMove);
-      return q.every(Number.isFinite) && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= maxMove ? q : p;
+      const q = transversal ? toIntersection(p, SA, SB) : snapPoint(p, [SA, SB], maxEdgeMove);
+      return q.every(Number.isFinite) && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= maxEdgeMove ? q : p;
     });
     // Quitar puntos intermedios repetidos o casi repetidos (más juntos que `gap`).
     const thin = (list, gap) => {
