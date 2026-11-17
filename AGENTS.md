@@ -6,3 +6,4 @@
 - Mantener la interfaz en español y un uso simple.
 - No presentar STEP facetado como reconstrucción paramétrica ni prometer perfección para STL arbitrarios.
 - Utilizar el checkout existente; no crear worktrees salvo petición explícita.
+- Antes de instalar cualquier skill, pasarla por skillspector y revisar el resultado. Si skillspector no está disponible o señala problemas, no instalarla y avisar al usuario.
