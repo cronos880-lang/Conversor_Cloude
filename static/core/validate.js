@@ -109,3 +109,25 @@ export function validate(oc, stepText, brep, regionArea) {
     try { oc.FS.unlink('/check.step'); } catch { /* ya eliminado */ }
   }
 }
+
+/**
+ * Reescribe el STEP con el escritor de Open CASCADE. Añade las curvas en el espacio de
+ * parámetros y las costuras de las superficies periódicas (toros, esferas, cilindros), que
+ * otros CAD (Parasolid/Onshape) necesitan para interpretar bien el contorno de esas caras.
+ * Devuelve el texto nuevo o null si falla.
+ */
+export function reexport(oc, stepText) {
+  const done = oc.IFSelect_ReturnStatus.IFSelect_RetDone;
+  const reader = new oc.STEPControl_Reader(), writer = new oc.STEPControl_Writer(), progress = new oc.Message_ProgressRange();
+  try {
+    oc.FS.writeFile('/final_in.step', stepText);
+    if (reader.ReadFile('/final_in.step') !== done || !reader.TransferRoots(progress)) return null;
+    const shape = reader.OneShape();
+    const ok = writer.Transfer(shape, oc.STEPControl_StepModelType.STEPControl_AsIs, true, progress) === done && writer.Write('/final_out.step') === done;
+    shape.delete();
+    return ok ? oc.FS.readFile('/final_out.step', { encoding: 'utf8' }) : null;
+  } catch { return null; } finally {
+    reader.delete(); writer.delete(); progress.delete();
+    for (const f of ['/final_in.step', '/final_out.step']) { try { oc.FS.unlink(f); } catch { /* no existe */ } }
+  }
+}

@@ -154,7 +154,7 @@ export function snapPoint(p, surfaces, maxMove) {
 export function fitCurve(pts, closed, A, B, tol) {
   const onBoth = p => Math.max(Math.abs(dist(A, p)), Math.abs(dist(B, p)));
   // La curva no puede alejarse de la poligonal más que la flecha de un arco razonable.
-  const near = (mid, i) => { const c = sub(pts[i + 1], pts[i]); return norm(sub(mid, mul(add(pts[i], pts[i + 1]), 0.5))) <= Math.max(3 * tol, 0.09 * norm(c)); };
+  const near = (mid, i) => { const c = sub(pts[i + 1], pts[i]); return norm(sub(mid, mul(add(pts[i], pts[i + 1]), 0.5))) <= Math.max(3 * tol, 0.13 * norm(c)); };
   let curve = null, dev = 0;
   if (!closed) {
     curve = lineFit(pts, tol);

@@ -81,28 +81,32 @@ export function findExtrusions(mesh, seg) {
       pts.sort((p, q) => (p[0] * tx + p[1] * ty) - (q[0] * tx + q[1] * ty));
       strip.set(r, pts);
     }
+    if (globalThis.EXDEBUG) console.log('dir', d.map(x => x.toFixed(2)).join(','), 'franjas', strip.size);
     if (strip.size < 3) continue;
     // Enlaces suaves entre franjas vecinas que comparten un extremo.
     const link = new Map(); for (const r of strip.keys()) link.set(r, new Set());
     for (let h = 0; h < nt * 3; h++) {
       const a = reg[(h / 3) | 0], b = adj[h] < 0 ? -1 : reg[(adj[h] / 3) | 0];
       if (a >= b || !strip.has(a) || !strip.has(b)) continue;
-      if (dot(prims[a].S.n, prims[b].S.n) < Math.cos(35 * RAD)) continue;
+      if (dot(prims[a].S.n, prims[b].S.n) < Math.cos(55 * RAD)) continue;
       const pa = strip.get(a), pb = strip.get(b);
       const ends = [pa[0], pa[pa.length - 1]], shared = ends.some(p => same(p, pb[0]) || same(p, pb[pb.length - 1]));
       if (shared) { link.get(a).add(b); link.get(b).add(a); }
     }
     for (const [r, s] of link) if (s.size > 2) { for (const q of s) link.get(q).delete(r); s.clear(); }
     const seen = new Set();
-    for (const start of strip.keys()) {
-      if (seen.has(start) || link.get(start).size !== 1) continue;
-      // Recorrer la cadena desde un extremo.
+    // Primero las cadenas abiertas (desde un extremo) y después las cerradas (agujeros completos).
+    const starts = [...strip.keys()].filter(r => link.get(r).size === 1).concat([...strip.keys()].filter(r => link.get(r).size === 2));
+    for (const start of starts) {
+      if (seen.has(start)) continue;
+      const closedChain = link.get(start).size === 2;
       const chain = [start]; seen.add(start);
       for (let cur = start; ;) {
         const next = [...link.get(cur)].find(q => !seen.has(q)); if (next === undefined) break;
         chain.push(next); seen.add(next); cur = next;
       }
-      if (chain.length < 3) continue;
+      if (chain.length < 3 || (closedChain && !link.get(chain[chain.length - 1]).has(start))) continue;
+      if (globalThis.EXDEBUG) console.log('  cadena', chain.length, closedChain ? 'cerrada' : 'abierta');
       // Perfil: puntos de cada franja en el orden de la cadena.
       let profile = null, ok = true;
       for (let k = 0; k < chain.length && ok; k++) {
@@ -118,19 +122,36 @@ export function findExtrusions(mesh, seg) {
           profile.push(...pts.slice(1));
         }
       }
-      if (!ok || profile.length < 4) continue;
+      if (!ok || profile.length < 4) { if (globalThis.EXDEBUG) console.log('   no: perfil', ok, profile && profile.length); continue; }
       // Suavidad del perfil y giro total apreciable (si no, es un plano).
-      let total = 0;
-      for (let i = 1; i + 1 < profile.length; i++) {
-        const ax = profile[i][0] - profile[i - 1][0], ay = profile[i][1] - profile[i - 1][1], bx = profile[i + 1][0] - profile[i][0], by = profile[i + 1][1] - profile[i][1];
+      // Perfil cerrado: el último punto coincide con el primero.
+      const closedProfile = closedChain && same(profile[0], profile[profile.length - 1]);
+      if (closedChain && !closedProfile) { if (globalThis.EXDEBUG) console.log('   no: perfil no cerrado'); continue; }
+      const pts2 = closedProfile ? profile.slice(0, -1) : profile;
+      let total = 0, maxTurn = 0;
+      const nP = pts2.length;
+      for (let i = closedProfile ? 0 : 1; i < (closedProfile ? nP : nP - 1); i++) {
+        const p0 = pts2[(i - 1 + nP) % nP], p1 = pts2[i], p2 = pts2[(i + 1) % nP];
+        const ax = p1[0] - p0[0], ay = p1[1] - p0[1], bx = p2[0] - p1[0], by = p2[1] - p1[1];
         const ang = Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by));
-        if (ang > 35 * RAD) { ok = false; break; }
-        total += ang;
+        maxTurn = Math.max(maxTurn, ang); total += ang;
       }
-      if (!ok || total < 10 * RAD) continue;
-      // Perfil en arco de circunferencia: es un cilindro, no una extrusión libre.
-      const circ = fitCircle2D(profile);
-      if (circ && profile.every(p => Math.abs(Math.hypot(p[0] - circ[0], p[1] - circ[1]) - circ[2]) <= tol)) {
+      if (maxTurn > 55 * RAD || total < 10 * RAD) { if (globalThis.EXDEBUG) console.log('   no: giro', (maxTurn / RAD).toFixed(0), (total / RAD).toFixed(0)); continue; }
+      // Perfil en arco de circunferencia: es un cilindro, no una extrusión libre. Con giros
+      // grandes (agujeros de pocas facetas) se exige una circunferencia con al menos 7 puntos;
+      // así no se redondean hexágonos ni cuadrados reales.
+      const circ = fitCircle2D(pts2);
+      const onCircle = circ && pts2.every(p => Math.abs(Math.hypot(p[0] - circ[0], p[1] - circ[1]) - circ[2]) <= tol);
+      // Redondeo de pocas facetas: todos los segmentos giran casi lo mismo (teselado de CAD).
+      const turns = [];
+      for (let i = closedProfile ? 0 : 1; i < (closedProfile ? nP : nP - 1); i++) {
+        const p0 = pts2[(i - 1 + nP) % nP], p1 = pts2[i], p2 = pts2[(i + 1) % nP];
+        turns.push(Math.abs(Math.atan2((p1[0] - p0[0]) * (p2[1] - p1[1]) - (p1[1] - p0[1]) * (p2[0] - p1[0]), (p1[0] - p0[0]) * (p2[0] - p1[0]) + (p1[1] - p0[1]) * (p2[1] - p1[1]))));
+      }
+      const regular = turns.length >= 2 && Math.min(...turns) > 0.75 * Math.max(...turns);
+      const coarseOk = !closedProfile && maxTurn <= 45 * RAD && pts2.length >= 5;
+      if ((maxTurn > 35 * RAD || closedProfile) && !coarseOk && !(onCircle && (pts2.length >= 7 || (regular && !closedProfile)))) { if (globalThis.EXDEBUG) console.log('   no: giro grande sin circunferencia', (maxTurn / RAD).toFixed(0), onCircle, pts2.length, regular, turns.map(t => (t / RAD).toFixed(0)).join('/')); continue; }
+      if (onCircle) {
         const c3 = [e1[0] * circ[0] + e2[0] * circ[1], e1[1] * circ[0] + e2[1] * circ[1], e1[2] * circ[0] + e2[2] * circ[1]];
         const C = { type: 'cylinder', p: c3, a: d, r: circ[2] };
         let s2 = 0;
@@ -147,7 +168,11 @@ export function findExtrusions(mesh, seg) {
           const mx = (profile[i][0] + profile[i + 1][0]) / 2, my = (profile[i][1] + profile[i + 1][1]) / 2, q = sp.samples, k = (i * 24 + 12) * 2;
           far = Math.max(far, Math.hypot(q[k] - mx, q[k + 1] - my));
         }
-        if (far > 6 * tol) continue; }
+        // En mallas gruesas la curva real queda por fuera de las cuerdas: se admite una flecha
+        // proporcional a la cuerda si el perfil tiene varios tramos y giros moderados.
+        let chord = 0; for (let i = 0; i + 1 < profile.length; i++) chord = Math.max(chord, Math.hypot(profile[i + 1][0] - profile[i][0], profile[i + 1][1] - profile[i][1]));
+        const allow = profile.length >= 5 && maxTurn <= 45 * RAD ? Math.max(6 * tol, 0.12 * chord) : 6 * tol;
+        if (far > allow) { if (globalThis.EXDEBUG) console.log('   no: abombado', far.toFixed(3), 'pts', profile.length, 'circ', onCircle); continue; } }
       let h0 = Infinity;
       for (const r of chain) for (const t of tris[r]) for (let j = 0; j < 3; j++) { const i = T[t * 3 + j]; h0 = Math.min(h0, V[i * 3] * d[0] + V[i * 3 + 1] * d[1] + V[i * 3 + 2] * d[2]); }
       const o = [d[0] * h0, d[1] * h0, d[2] * h0], P3 = c => [o[0] + e1[0] * c[0] + e2[0] * c[1], o[1] + e1[1] * c[0] + e2[1] * c[1], o[2] + e1[2] * c[0] + e2[2] * c[1]];
@@ -159,7 +184,7 @@ export function findExtrusions(mesh, seg) {
         const c = [0, 1, 2].map(k => (V[T[t * 3] * 3 + k] + V[T[t * 3 + 1] * 3 + k] + V[T[t * 3 + 2] * 3 + k]) / 3);
         s += A[t] * dot([N[t * 3], N[t * 3 + 1], N[t * 3 + 2]], normalAt(S, c));
       }
-      if (!(res <= tol)) continue;
+      if (!(res <= tol)) { if (globalThis.EXDEBUG) console.log('   no: residuo', res.toFixed(3)); continue; }
       const r0 = chain[0];
       prims[r0] = { S, sign: s >= 0 ? 1 : -1, res };
       for (const r of chain) { used[r] = 1; if (r !== r0) for (const t of tris[r]) reg[t] = r0; }

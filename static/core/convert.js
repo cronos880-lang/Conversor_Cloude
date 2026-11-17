@@ -3,7 +3,7 @@ import { buildMesh, components, dropFlatComponents, finishMesh } from './mesh.js
 import { segment, demote, mergeSameSurfaces } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
-import { validate } from './validate.js';
+import { validate, reexport } from './validate.js';
 import { findExtrusions } from './extrude.js';
 
 const EDGE_LIMIT = 0.1; // mm
@@ -175,5 +175,10 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
   last.report.rounds = rounds; last.report.demoted = demoted;
   if (mesh.repairs) last.report.repairs = mesh.repairs;
   last.report.checkedVolume = last.check.volume;
+  // STEP final escrito por el motor CAD (curvas de parámetros y costuras para otros CAD).
+  onStatus('Escribiendo el STEP final…');
+  const engineFinal = factory ? await factory() : oc;
+  const final = reexport(engineFinal, last.step);
+  if (final) { last.step = final; last.report.reexported = true; }
   return { ...last, ...state };
 }
