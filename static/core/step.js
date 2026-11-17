@@ -48,16 +48,7 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}
     switch (S.type) {
       case 'plane': { const o = mul(S.n, S.d); return add_(`PLANE('',#${axis2(o, S.n, perp(S.n))})`); }
       case 'cylinder': return add_(`CYLINDRICAL_SURFACE('',#${axis2(S.p, S.a, perp(S.a))},${num(S.r)})`);
-      case 'sphere': {
-        // Medias esferas completas (un único círculo máximo): eje Z como en su contorno.
-        const loops = f.loops, e0 = loops.length === 1 && loops[0].length === 1 ? brep.edges[loops[0][0].edge] : null;
-        if (e0 && e0.curve.type === 'circle' && Math.abs(e0.curve.r - S.r) < 1e-9) return add_(`SPHERICAL_SURFACE('',#${axis2(S.c, [0, 0, 1], [1, 0, 0])},${num(S.r)})`);
-        // Resto: los polos de la parametrización, lejos de la cara (cara centrada en el ecuador).
-        let m = [0, 0, 0];
-        for (const loop of loops) for (const ref of loop) for (const v of [brep.edges[ref.edge].v0, brep.edges[ref.edge].v1]) { const u = unit(sub(brep.vertices[v], S.c)); m = [m[0] + u[0], m[1] + u[1], m[2] + u[2]]; }
-        m = unit(m);
-        return add_(`SPHERICAL_SURFACE('',#${axis2(S.c, perp(m), m)},${num(S.r)})`);
-      }
+      case 'sphere': return add_(`SPHERICAL_SURFACE('',#${axis2(S.c, [0, 0, 1], [1, 0, 0])},${num(S.r)})`);
       case 'torus': return add_(`TOROIDAL_SURFACE('',#${axis2(S.c, S.a, perp(S.a))},${num(S.R)},${num(S.r)})`);
       case 'extrusion': {
         const c = S.curve, pts = c.ctrl.map(p => '#' + pt(p)).join(',');

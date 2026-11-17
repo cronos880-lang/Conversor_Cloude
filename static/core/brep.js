@@ -92,17 +92,20 @@ export function buildBrep(mesh, seg, comp, options = {}) {
       const q = transversal ? toIntersection(p, SA, SB) : snapPoint(p, [SA, SB], maxMove);
       return q.every(Number.isFinite) && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= maxMove ? q : p;
     });
-    // Quitar puntos repetidos tras el ajuste.
-    // Quitar puntos intermedios casi repetidos: más juntos que la tolerancia del STEP,
-    // al leerlo se funden y dejan aristas sueltas.
-    { const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 0.002, last = pts[pts.length - 1], kept = [pts[0]];
-      for (let i = 1; i < pts.length - 1; i++) if (!near(pts[i], kept[kept.length - 1]) && !near(pts[i], last)) kept.push(pts[i]);
-      kept.push(last); pts = kept; }
+    // Quitar puntos intermedios repetidos o casi repetidos (más juntos que `gap`).
+    const thin = (list, gap) => {
+      const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < gap, last = list[list.length - 1], kept = [list[0]];
+      for (let i = 1; i < list.length - 1; i++) if (!near(list[i], kept[kept.length - 1]) && !near(list[i], last)) kept.push(list[i]);
+      kept.push(last); return kept;
+    };
+    pts = thin(pts, 1e-9);
     let fit = null;
     if (!polyFaces.has(A) && !polyFaces.has(B)) { fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null; }
     chainInfo.push({ A: SA.type, B: SB.type, kind: fit ? fit.curve.type : 'poly', n: pts.length, closed, len: +Math.hypot(...pts[0].map((x, i) => x - pts[pts.length - 1][i])).toFixed(3), resA: +(prims[A].res || 0).toExponential(1), resB: +(prims[B].res || 0).toExponential(1) });
     if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length, A, B }); return [edges.length - 1]; }
     // Poligonal: un segmento recto por cada arista de la malla.
+    // Tramos más cortos que la tolerancia del STEP se fundirían al leerlo y dejarían aristas sueltas.
+    pts = thin(pts, options.polyGap ?? 1e-9);
     const ids = []; let prev = v0;
     for (let i = 1; i < pts.length; i++) {
       let cur = v1;

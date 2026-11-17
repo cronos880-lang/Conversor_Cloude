@@ -129,6 +129,14 @@ export function findExtrusions(mesh, seg) {
       }
       if (!ok || total < 10 * RAD) continue;
       const sp = spline2(profile);
+      // La curva no puede separarse de las franjas (cuerdas del perfil): si no, el perfil
+      // no es una curva suave sino un polígono con caras planas de verdad.
+      { let far = 0;
+        for (let i = 0; i + 1 < profile.length; i++) {
+          const mx = (profile[i][0] + profile[i + 1][0]) / 2, my = (profile[i][1] + profile[i + 1][1]) / 2, q = sp.samples, k = (i * 24 + 12) * 2;
+          far = Math.max(far, Math.hypot(q[k] - mx, q[k + 1] - my));
+        }
+        if (far > 6 * tol) continue; }
       let h0 = Infinity;
       for (const r of chain) for (const t of tris[r]) for (let j = 0; j < 3; j++) { const i = T[t * 3 + j]; h0 = Math.min(h0, V[i * 3] * d[0] + V[i * 3 + 1] * d[1] + V[i * 3 + 2] * d[2]); }
       const o = [d[0] * h0, d[1] * h0, d[2] * h0], P3 = c => [o[0] + e1[0] * c[0] + e2[0] * c[1], o[1] + e1[1] * c[0] + e2[1] * c[1], o[2] + e1[2] * c[0] + e2[2] * c[1]];

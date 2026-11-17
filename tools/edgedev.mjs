@@ -21,3 +21,8 @@ for (const e of bad) {
   const P = i => [0, 1, 2].map(k => r.mesh.V[i * 3 + k]);
   console.log('plano', A, JSON.stringify(r.seg.prims[A]).slice(0, 200), 'tris', ts.length, 'dist vértices', ts.flatMap(t => [0, 1, 2].map(j => dist(r.seg.prims[A].S, P(r.mesh.T[t * 3 + j])).toFixed(3))).join(' '));
 }
+{
+  const loose = r.brep.edges.filter(e => e.dev > 0.1);
+  const kinds = {}; for (const e of loose) { const k = (e.poly ? 'poly' : e.curve.type) + ' n=' + e.n; kinds[k] = (kinds[k] || 0) + 1; }
+  console.log('aristas con holgura > 0,1:', loose.length, JSON.stringify(kinds), 'máx', Math.max(0, ...loose.map(e => e.dev)).toFixed(3));
+}

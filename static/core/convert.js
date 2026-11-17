@@ -35,7 +35,7 @@ function prepare(positions, scale, onStatus) {
 
 function build(state, name, polyFaces) {
   const { mesh, comp, seg } = state;
-  const brep = buildBrep(mesh, seg, comp, { polyFaces });
+  const brep = buildBrep(mesh, seg, comp, { polyFaces, polyGap: state.polyGap });
   let dev = 0; for (const e of brep.edges) if (!e.poly) dev = Math.max(dev, e.dev);
   const step = writeStep(brep, name, Math.max(1e-6, Math.min(dev, 1e-2)));
   const types = {}; for (const f of brep.faces) if (f.loops.length) types[f.S.type] = (types[f.S.type] || 0) + 1;
@@ -61,7 +61,18 @@ export function convert(positions, { scale = 1, name = 'pieza', onStatus = () =>
  * Con una función, en mallas grandes se usa un motor limpio en cada validación,
  * porque leer STEP enormes agota o corrompe la memoria del motor.
  */
-export async function convertValidated(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null } = {}) {
+export async function convertValidated(positions, engine, options = {}) {
+  const first = await attempt(positions, engine, options, 1e-9);
+  // Si hubo que degradar caras, probar quitando también los puntos casi repetidos de los
+  // bordes poligonales (más juntos que la tolerancia del STEP) y quedarse con el mejor.
+  if (!first.report.demoted || first.mesh.nt > 50000) return first;
+  try {
+    const second = await attempt(positions, engine, { ...options, trace: null, dump: null }, 0.002);
+    return second.report.faces < first.report.faces ? second : first;
+  } catch { return first; }
+}
+
+async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null } = {}, polyGap = 1e-9) {
   const factory = typeof engine === 'function' ? engine : null;
   let oc = factory ? await factory() : engine, fresh = true;
   const check_ = async (step, brep, regionArea) => {
@@ -73,7 +84,7 @@ export async function convertValidated(positions, engine, { scale = 1, name = 'p
     return r;
   };
   let mesh_ = { nt: 0 };
-  const state = prepare(positions, scale, onStatus);
+  const state = prepare(positions, scale, onStatus); state.polyGap = polyGap;
   const { mesh, seg } = state; mesh_ = mesh;
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
   // En mallas grandes cada ronda es cara: las caras defectuosas pasan directamente a facetas.
