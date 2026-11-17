@@ -101,6 +101,12 @@ export function convertValidated(positions, oc, { scale = 1, name = 'pieza', onS
     }
     if (!progress) break;
   }
+  // Si casi toda la pieza quedó en facetas, las pocas caras curvas restantes dejan
+  // holguras en sus bordes que Onshape marca como defectos: mejor todo en facetas exactas.
+  if (good) {
+    const facets = seg.prims.filter(p => p.facet).length, curved = good.brep.faces.filter(f => f.loops.length && f.S.type !== 'plane').length;
+    if (curved && facets > 4 * good.report.faces / 5) { good = null; onStatus('Demasiadas zonas sin reconocer: usando caras planas exactas…'); }
+  }
   if (!good) {
     // Último recurso: todo el sólido con facetas planas (como una conversión facetada clásica).
     onStatus('Usando caras planas en toda la pieza…');
