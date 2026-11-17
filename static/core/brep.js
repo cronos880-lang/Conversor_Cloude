@@ -71,7 +71,10 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     const v = v0 + shell * mesh.nv; let id = vertexId.get(v);
     if (id === undefined) {
       id = vertices.length; vertexId.set(v, id);
-      vertices.push(snapPoint(P(v0), [...cornerRegions.get(v)].map(r => prims[r].S), maxMove));
+      // Junto a una faceta el vértice de la malla ya es exacto: ajustarlo a planos casi
+      // paralelos lo desplazaría y podría cruzar caras.
+      const regs = [...cornerRegions.get(v)];
+      vertices.push(regs.some(r => prims[r].facet) ? P(v0) : snapPoint(P(v0), regs.map(r => prims[r].S), maxMove));
     }
     return id;
   };
