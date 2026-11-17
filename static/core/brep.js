@@ -93,7 +93,11 @@ export function buildBrep(mesh, seg, comp, options = {}) {
       return q.every(Number.isFinite) && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= maxMove ? q : p;
     });
     // Quitar puntos repetidos tras el ajuste.
-    pts = pts.filter((p, i) => i === 0 || i === pts.length - 1 || (!same(p, pts[i - 1]) && !same(p, pts[pts.length - 1])));
+    // Quitar puntos intermedios casi repetidos: más juntos que la tolerancia del STEP,
+    // al leerlo se funden y dejan aristas sueltas.
+    { const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 0.002, last = pts[pts.length - 1], kept = [pts[0]];
+      for (let i = 1; i < pts.length - 1; i++) if (!near(pts[i], kept[kept.length - 1]) && !near(pts[i], last)) kept.push(pts[i]);
+      kept.push(last); pts = kept; }
     let fit = null;
     if (!polyFaces.has(A) && !polyFaces.has(B)) { fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null; }
     chainInfo.push({ A: SA.type, B: SB.type, kind: fit ? fit.curve.type : 'poly', n: pts.length, closed, len: +Math.hypot(...pts[0].map((x, i) => x - pts[pts.length - 1][i])).toFixed(3), resA: +(prims[A].res || 0).toExponential(1), resB: +(prims[B].res || 0).toExponential(1) });
