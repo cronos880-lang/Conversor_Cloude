@@ -4,7 +4,7 @@ import initOpenCascade from './vendor/replicad_single.js';
 import { convertValidated } from './core/convert.js';
 
 export const MAX_TRIANGLES = 400000;
-const NAMES = { plane: ['plano', 'planos'], cylinder: ['cilindro', 'cilindros'], cone: ['cono', 'conos'], sphere: ['esfera', 'esferas'], torus: ['toro', 'toros'] };
+const NAMES = { plane: ['plano', 'planos'], cylinder: ['cilindro', 'cilindros'], cone: ['cono', 'conos'], sphere: ['esfera', 'esferas'], torus: ['toro', 'toros'], extrusion: ['superficie extruida', 'superficies extruidas'] };
 
 function summary(report) {
   const parts = Object.keys(NAMES).filter(k => report.types[k]).map(k => `${report.types[k]} ${NAMES[k][report.types[k] === 1 ? 0 : 1]}`);
