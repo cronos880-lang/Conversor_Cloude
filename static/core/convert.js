@@ -1,6 +1,6 @@
 // Conversión completa: posiciones STL -> texto STEP con superficies analíticas.
 import { buildMesh, components, dropFlatComponents, finishMesh } from './mesh.js';
-import { segment, demote, mergeSameSurfaces, splitRegion } from './segment.js';
+import { segment, demote, mergeSameSurfaces, splitRegion, defaultTolerance } from './segment.js';
 import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate, reexport } from './validate.js';
@@ -20,7 +20,7 @@ function looseRegions(brep, prims, limit) {
   return out;
 }
 
-function prepare(positions, scale, onStatus) {
+function prepare(positions, scale, onStatus, tolFactor = 1) {
   onStatus('Analizando la malla…');
   let mesh = buildMesh(positions, scale);
   if (!mesh.open && !mesh.nonManifold) mesh = dropFlatComponents(mesh);
@@ -35,7 +35,7 @@ function prepare(positions, scale, onStatus) {
   if (!(mesh.volume > 1e-9 * mesh.diag ** 3)) throw new Error('El STL no encierra un volumen válido.');
   const comp = components(mesh);
   onStatus('Reconociendo superficies…');
-  const seg = segment(mesh);
+  const seg = segment(mesh, tolFactor !== 1 ? { tol: Math.min(0.06, defaultTolerance(mesh) * tolFactor) } : {});
   mergeSameSurfaces(mesh, seg);
   findExtrusions(mesh, seg);
   mergeSameSurfaces(mesh, seg);
@@ -81,7 +81,7 @@ export async function convertValidated(positions, engine, options = {}) {
   } catch { return first; }
 }
 
-async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null } = {}, polyGap = 1e-9) {
+async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null, tolFactor = 1 } = {}, polyGap = 1e-9) {
   const factory = typeof engine === 'function' ? engine : null;
   let oc = factory ? await factory() : engine, fresh = true;
   const check_ = async (step, brep, regionArea) => {
@@ -93,7 +93,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
     return r;
   };
   let mesh_ = { nt: 0 };
-  const state = prepare(positions, scale, onStatus); state.polyGap = polyGap;
+  const state = prepare(positions, scale, onStatus, tolFactor); state.polyGap = polyGap;
   const { mesh, seg } = state; mesh_ = mesh;
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
   // En mallas grandes cada ronda es cara: las caras defectuosas pasan directamente a facetas.

@@ -3,7 +3,7 @@ CONVERSOR 3D · STL -> STEP  (versión descargable)
 
 Qué es
 ------
-La misma aplicación que la web de pruebas, para usarla sin conexión en tu equipo.
+El Visor STL a STEP (interfaz R21) con el motor de Cloude, igual que la web de pruebas, para usarla sin conexión en tu equipo.
 Convierte un STL en un STEP con caras reales (planos, cilindros, conos, esferas,
 toros y superficies extruidas) que se puede editar en Onshape u otros programas CAD.
 Todo ocurre en tu equipo: ningún archivo sale de él.

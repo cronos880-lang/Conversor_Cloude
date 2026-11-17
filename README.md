@@ -1,14 +1,14 @@
 # Conversor 3D · STL → STEP con superficies reales
 
-Versión derivada de [Conversor_3D](https://github.com/cronos880-lang/Conversor_3D). Mantiene la misma interfaz web y cambia por completo el motor de conversión: en lugar de crear una cara plana por cada triángulo, **reconoce las superficies de la pieza** (planos, cilindros, conos, esferas y toros) y escribe un STEP con esas caras, sus aristas (rectas, arcos y curvas) y sus vértices.
+Versión derivada de [Conversor_3D](https://github.com/cronos880-lang/Conversor_3D). Usa la interfaz del Visor R21 y cambia por completo el motor de conversión: en lugar de crear una cara plana por cada triángulo, **reconoce las superficies de la pieza** (planos, cilindros, conos, esferas y toros) y escribe un STEP con esas caras, sus aristas (rectas, arcos y curvas) y sus vértices.
 
 Todo sigue ocurriendo en el navegador: sin instalaciones, sin cuentas y sin subir archivos a ningún servidor.
 
 ## Versión descargable (sin conexión)
 
-[Descargar Conversor_Cloude C1 (ZIP, 7,7 MB)](https://github.com/cronos880-lang/Conversor_Cloude/blob/claude/adoring-fermat-ptg1ro/entrega/Conversor_Cloude_C1.zip?raw=true)
+[Descargar Conversor_Cloude C2 (ZIP, 7,7 MB)](https://github.com/cronos880-lang/Conversor_Cloude/blob/claude/adoring-fermat-ptg1ro/entrega/Conversor_Cloude_C2.zip?raw=true)
 
-Extrae todo el ZIP en una carpeta nueva y abre `Iniciar_Conversor.bat` (Windows). Arranca un servidor local mínimo con PowerShell, que ya viene con Windows, y abre el navegador; no instala nada ni necesita Python. En Linux o macOS usa `iniciar_conversor.sh` (requiere `python3`). Instrucciones en `LEEME_PRIMERO.txt` dentro del ZIP. El paquete se genera con `python tools/build_entrega.py C1`.
+Extrae todo el ZIP en una carpeta nueva y abre `Iniciar_Conversor.bat` (Windows). Arranca un servidor local mínimo con PowerShell, que ya viene con Windows, y abre el navegador; no instala nada ni necesita Python. En Linux o macOS usa `iniciar_conversor.sh` (requiere `python3`). Instrucciones en `LEEME_PRIMERO.txt` dentro del ZIP. El paquete se genera con `python tools/build_entrega.py C2`.
 
 ## Uso
 
@@ -39,7 +39,7 @@ Límites: 100 MB y 400.000 triángulos. El STL no declara unidades: elige las co
 
 | Ruta | Contenido |
 |---|---|
-| `index.html`, `static/app.js` | Interfaz y visor 3D (sin cambios de diseño respecto al original). |
+| `index.html`, `static/presentation.js` | Interfaz del Visor R21 (rama `perfeccion_Visualizador_R21` de Conversor_3D), sin cambios de diseño, conectada al motor de este repositorio. |
 | `static/convert-worker.js` | Worker que ejecuta la conversión y la validación. |
 | `static/core/mesh.js` | Lectura de STL, soldadura, reparación y adyacencias. |
 | `static/core/fit.js` | Ajuste de cilindros, conos, esferas y toros. |
@@ -78,5 +78,4 @@ Cada push a `main` (o a la rama de pruebas) ejecuta `.github/workflows/pages.yml
 
 ## Componentes de terceros
 
-- Three.js 0.180.0, licencia MIT incluida en `static/vendor/THREE-LICENSE`.
 - replicad-opencascadejs 1.1.0, licencia LGPL-2.1 incluida en `static/vendor/OPENCASCADE-LICENSE`. Distribución original: https://www.npmjs.com/package/replicad-opencascadejs . El JavaScript y el WebAssembly se conservan como archivos separados y reemplazables, sin modificaciones.

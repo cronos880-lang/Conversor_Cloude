@@ -7,7 +7,7 @@ const wasmBinary = fs.readFileSync(new URL('../static/vendor/replicad_single.was
 const oc = () => init({ wasmBinary, print: () => {}, printErr: () => {} });
 const buf = fs.readFileSync(process.argv[2]); const t0 = performance.now();
 try {
-  const r = await convertValidated(parseSTL(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)), oc, { name: path.basename(process.argv[2]).replace(/\.stl$/i, ''), onStatus: s => process.env.QUIET || console.log('  ·', s), trace: c => console.log('    ', JSON.stringify(c)), maxRounds: +(process.env.ROUNDS || Infinity), dump: process.env.DUMP ? (r, step) => fs.writeFileSync(`${process.env.DUMP}_${r}.step`, step) : null });
+  const r = await convertValidated(parseSTL(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)), oc, { name: path.basename(process.argv[2]).replace(/\.stl$/i, ''), onStatus: s => process.env.QUIET || console.log('  ·', s), tolFactor: +(process.env.TOLF || 1), trace: c => console.log('    ', JSON.stringify(c)), maxRounds: +(process.env.ROUNDS || Infinity), dump: process.env.DUMP ? (r, step) => fs.writeFileSync(`${process.env.DUMP}_${r}.step`, step) : null });
   if (process.argv[3]) fs.writeFileSync(process.argv[3], r.step);
   console.log(JSON.stringify(r.report), ((performance.now() - t0) / 1000).toFixed(1) + 's');
 } catch (e) { console.log('ERROR', typeof e, e && e.message || e); }
