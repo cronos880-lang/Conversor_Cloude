@@ -121,11 +121,12 @@ export async function convertValidated(positions, engine, { scale = 1, name = 'p
     }
     if (!progress) break;
   }
+  let fallbackGood = null;
   // Si casi toda la pieza quedó en facetas, las pocas caras curvas restantes dejan
   // holguras en sus bordes que Onshape marca como defectos: mejor todo en facetas exactas.
   if (good) {
     const facets = seg.prims.filter(p => p.facet).length, curved = good.brep.faces.filter(f => f.loops.length && f.S.type !== 'plane').length;
-    if (curved && facets > 4 * good.report.faces / 5) { good = null; onStatus('Demasiadas zonas sin reconocer: usando caras planas exactas…'); }
+    if (curved && facets > 4 * good.report.faces / 5) { fallbackGood = good; good = null; onStatus('Demasiadas zonas sin reconocer: usando caras planas exactas…'); }
   }
   if (!good) {
     // Último recurso: todo el sólido con facetas planas (como una conversión facetada clásica).
@@ -140,6 +141,8 @@ export async function convertValidated(positions, engine, { scale = 1, name = 'p
     if (trace) trace({ round: 'facetas', valid: check.valid, vol: +(check.volume / mesh.volume).toFixed(4), area: +(check.area / mesh.area).toFixed(4), nbad: check.bad.size, error: check.error });
     if (check.valid && Math.abs(check.volume - mesh.volume) <= 0.02 * Math.abs(mesh.volume)) good = { ...out, check, rounds };
   }
+  // Si el facetado completo no sale válido, se conserva el resultado anterior, que sí lo era.
+  if (!good) good = fallbackGood;
   if (!good) throw new Error('No se pudo obtener un sólido válido a partir de este STL.');
   const last = good; rounds = good.rounds;
   last.report.rounds = rounds; last.report.demoted = demoted;
