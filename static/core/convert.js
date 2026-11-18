@@ -5,6 +5,7 @@ import { buildBrep } from './brep.js';
 import { writeStep } from './step.js';
 import { validate, reexport } from './validate.js';
 import { findExtrusions } from './extrude.js';
+import { regularize } from './regularize.js';
 
 // Dividir caras que fallan: desactivado (en el chasis un trozo de toro se interpretaba al revés).
 const SPLIT_FACES = !!globalThis.process?.env?.SPLIT_FACES;
@@ -39,6 +40,7 @@ function prepare(positions, scale, onStatus, tolFactor = 1) {
   mergeSameSurfaces(mesh, seg);
   findExtrusions(mesh, seg);
   mergeSameSurfaces(mesh, seg);
+  if (!globalThis.process?.env?.NOREG) regularize(mesh, seg);
   return { mesh, comp, seg };
 }
 
@@ -193,7 +195,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
   // STEP final escrito por el motor CAD (curvas de parámetros y costuras para otros CAD).
   onStatus('Escribiendo el STEP final…');
   const engineFinal = factory ? await factory() : oc;
-  const final = reexport(engineFinal, last.step);
+  const final = globalThis.process?.env?.NOREEXPORT ? null : reexport(engineFinal, last.step);
   if (final) { last.step = final; last.report.reexported = true; }
   return { ...last, ...state };
 }

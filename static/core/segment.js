@@ -556,11 +556,11 @@ export function mergeSameSurfaces(mesh, seg) {
   const thin = (list, n) => list.length > n ? list.filter((_, i) => i % Math.ceil(list.length / n) === 0) : list;
 
   /** Superficie común a la unión de las regiones a y b, o null. */
-  function common(a, b) {
+  function common(a, b, tolUse = tol) {
     const pa = prims[a], pb = prims[b];
     if (pa.facet || pb.facet || pa.S.type === 'extrusion' || pb.S.type === 'extrusion') return null;
     const vs = new Set(); for (const r of [a, b]) for (const t of tris[r]) for (let j = 0; j < 3; j++) vs.add(T[t * 3 + j]);
-    const pts = [...vs].map(P), on = S => pts.every(p => Math.abs(dist(S, p)) <= tol);
+    const pts = [...vs].map(P), on = S => pts.every(p => Math.abs(dist(S, p)) <= tolUse);
     if (pa.S.type === 'plane' || pb.S.type === 'plane') {
       if (pa.S.type !== pb.S.type) {
         // Región plana pequeña sobre una superficie curva vecina: se integra en ella.
@@ -604,6 +604,19 @@ export function mergeSameSurfaces(mesh, seg) {
     return null;
   }
 
+  /** ¿Las superficies de a y b (curvas) tienen casi la misma normal a lo largo de su borde común? */
+  function nearTangent(a, b) {
+    const pa = prims[a], pb = prims[b];
+    if (pa.facet || pb.facet || pa.S.type === 'plane' || pb.S.type === 'plane' || pa.S.type === 'extrusion' || pb.S.type === 'extrusion') return false;
+    let n = 0, sum = 0;
+    for (const t of tris[a]) for (let k = 0; k < 3; k++) {
+      const h = adj[t * 3 + k]; if (h < 0 || reg[(h / 3) | 0] !== b) continue;
+      const i = T[t * 3 + k], j = T[t * 3 + (k + 1) % 3], x = [0, 1, 2].map(q => (V[i * 3 + q] + V[j * 3 + q]) / 2);
+      sum += dot(normalAt(pa.S, x), normalAt(pb.S, x)) * pa.sign * pb.sign; n++;
+    }
+    return n >= 3 && sum / n > Math.cos(12 * RAD);
+  }
+
   let merged = 0;
   for (let pass = 0; pass < 4; pass++) {
     const pairs = new Map();
@@ -619,7 +632,9 @@ export function mergeSameSurfaces(mesh, seg) {
     let changed = 0;
     for (const [a, b] of list) {
       if (!tris[a].length || !tris[b].length) continue;
-      const c = common(a, b); if (!c) continue;
+      // Dos superficies curvas casi iguales que se encuentran casi tangentes dan una arista mal
+      // definida que Onshape (Parasolid) rechaza: se intenta unirlas con algo más de margen.
+      const c = common(a, b) || (nearTangent(a, b) ? common(a, b, 2.5 * tol) : null); if (!c) continue;
       const keep = c.keep ?? (area[a] >= area[b] ? a : b), gone = keep === a ? b : a;
       for (const t of tris[gone]) reg[t] = keep;
       tris[keep] = tris[keep].concat(tris[gone]); tris[gone] = [];
