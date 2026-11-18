@@ -2,7 +2,7 @@
 // Pequeños errores de ajuste hacen que superficies que deberían ser paralelas, coaxiales o
 // tangentes se crucen ligeramente cerca de su borde común, y Parasolid (Onshape) rechaza el
 // sólido. Aquí se corrigen esos casos cuando la diferencia está dentro de la tolerancia.
-import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis } from './fit.js';
+import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt } from './fit.js';
 
 const RAD = Math.PI / 180;
 const axisOf = S => S.a, originOf = S => S.p || S.apex || S.c;
@@ -57,6 +57,25 @@ export function regularize(mesh, seg) {
   const nb = prims.map(() => new Set());
   for (let h = 0; h < nt * 3; h++) { if (adj[h] < 0) continue; const a = reg[(h / 3) | 0], b = reg[(adj[h] / 3) | 0]; if (a !== b) { nb[a].add(b); nb[b].add(a); } }
 
+  // 0) Planos casi paralelos o perpendiculares a planos mayores (< 0,5°): exactamente.
+  if (!globalThis.process?.env?.NOPLANE) {
+    const big = [];
+    for (const i of prims.map((_, k) => k).filter(live).sort((a, b) => area[b] - area[a])) {
+      const S = prims[i].S; if (S.type !== 'plane') continue;
+      let n = S.n;
+      for (const d of big) {
+        const c = dot(n, d);
+        if (Math.abs(c) > Math.cos(0.5 * RAD) && Math.abs(c) < 1 - 1e-15) n = c < 0 ? mul(d, -1) : d;
+        else if (Math.abs(c) < Math.sin(0.5 * RAD) && Math.abs(c) > 1e-15) n = unit(sub(n, mul(d, c)));
+      }
+      if (n !== S.n) {
+        const pts = vertsOf(i), m = pts.reduce((s2, p) => add(s2, mul(p, 1 / pts.length)), [0, 0, 0]);
+        set(i, { ...S, n, d: dot(n, m) });
+      }
+      if (area[i] > 0.005 * mesh.area && big.length < 12 && !big.some(d => Math.abs(dot(d, prims[i].S.n)) > 1 - 1e-12)) big.push(prims[i].S.n);
+    }
+  }
+
   // 1) Ejes de revolución casi paralelos a una dirección de referencia (normales de planos
   //    grandes y ejes de regiones mayores) -> exactamente paralelos.
   const order = prims.map((_, i) => i).filter(live).sort((a, b) => area[b] - area[a]);
@@ -82,6 +101,14 @@ export function regularize(mesh, seg) {
       const h = dot(sub(m, o), a), pivot = add(o, mul(a, h));
       if (S.type === 'cylinder') S2.p = pivot;
       set(i, S2);
+    }
+    // Eje casi contenido en la dirección de un plano grande (perpendicular a su normal): exacto.
+    if (prims[i].S.type === 'cylinder') for (const d of planeRefs) {
+      const C = prims[i].S, c = dot(C.a, d);
+      if (Math.abs(c) < 1e-12 || Math.abs(c) > Math.sin(1.5 * RAD)) continue;
+      const pts = vertsOf(i), m = pts.reduce((s2, p) => add(s2, mul(p, 1 / pts.length)), [0, 0, 0]);
+      const pivot = add(C.p, mul(C.a, dot(sub(m, C.p), C.a)));
+      set(i, { ...C, a: unit(sub(C.a, mul(d, c))), p: pivot });
     }
     refs.push(prims[i].S.a);
   }
@@ -173,6 +200,29 @@ export function regularize(mesh, seg) {
       const cur = prims[i].S, d0 = dot(P.n, cur.p) - P.d;
       for (const target of [cur.r, -cur.r]) if (Math.abs(d0 - target) < 2 * tol && Math.abs(d0 - target) > 1e-12) { set(i, { ...cur, p: add(cur.p, mul(P.n, target - d0)) }); break; }
     }
+  }
+  // 5) Franjas planas diminutas junto a un redondeo que en realidad son facetas de él (la fila
+  //    de triángulos que toca la cara tangente): se integran en la superficie curva.
+  if (!globalThis.process?.env?.NOABSORB) for (const i of order) {
+    if (!live(i) || prims[i].S.type !== 'plane') continue;
+    let best = null;
+    for (const j of nb[i]) {
+      if (!live(j) || prims[j].S.type === 'plane' || area[i] > 0.05 * area[j]) continue;
+      const w = worst(i, prims[j].S);
+      if (!(w <= 1.5 * tol) || (best && w >= best.w)) continue;
+      // Cada triángulo debe estar orientado como la superficie curva en ese punto.
+      const S = prims[j].S;
+      const aligned = tris[i].every(t => {
+        const P = [0, 1, 2].map(k => { const v = T[t * 3 + k]; return [V[v * 3], V[v * 3 + 1], V[v * 3 + 2]]; });
+        const n = cross(sub(P[1], P[0]), sub(P[2], P[0])), l = norm(n); if (!(l > 0)) return true;
+        const c = mul(add(add(P[0], P[1]), P[2]), 1 / 3);
+        return Math.abs(dot(mul(n, 1 / l), normalAt(S, c))) > Math.cos(15 * RAD);
+      });
+      if (aligned) best = { j, w };
+    }
+    if (!best) continue;
+    for (const t of tris[i]) { reg[t] = best.j; tris[best.j].push(t); }
+    area[best.j] += area[i]; area[i] = 0; tris[i] = []; changes++;
   }
   return changes;
 }

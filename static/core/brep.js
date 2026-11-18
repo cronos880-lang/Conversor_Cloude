@@ -1,6 +1,6 @@
 // Topología B-rep a partir de la segmentación: caras, bucles, aristas y vértices.
 import { fitCurve, smoothCurve, snapPoint, toIntersection, cornerOnTangent } from './curves.js';
-import { dist, normalAt, cross as crossV, norm as normV } from './fit.js';
+import { dist, normalAt, cross as crossV, norm as normV, dot as dot3 } from './fit.js';
 import { perp, cross, add, mul } from './fit.js';
 
 /**
@@ -67,7 +67,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   // 2) Geometría: vértices y puntos intermedios llevados sobre las superficies ajustadas.
   // Ajuste corto: desplazar más los vértices hace que se crucen contornos en piezas finas.
   const envNum = k => Number(globalThis.process?.env?.[k]) || 0; // solo para pruebas en Node
-  const maxMove = (envNum('MOVE') || 0.25) * tol;          // esquinas
+  const maxMove = (envNum('MOVE') || options.move || 1) * tol;          // esquinas
+  const maxMoveSharp = (envNum('MOVES') || 3) * tol;    // esquinas nítidas (tres caras transversales)
   const maxEdgeMove = (envNum('MOVEE') || 0.25) * tol;     // puntos intermedios de las aristas
   const vertices = [], vertexId = new Map();
   // Aristas diminutas: más cortas que la tolerancia de sus vértices, Parasolid (Onshape) las
@@ -89,6 +90,14 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     }
   }
   if (globalThis.BREPDEBUG) console.log('aristas cortas fundidas', collapsed.size, 'límite', shortLimit.toFixed(4));
+  // Esquina nítida: tres de sus superficies se cortan de forma bien definida (normales casi
+  // independientes), así que su punto común es fiable aunque esté algo lejos del de la malla.
+  const sharp = (p, surf) => {
+    const N = surf.map(S => normalAt(S, p));
+    for (let i = 0; i < N.length; i++) for (let j = i + 1; j < N.length; j++) for (let k = j + 1; k < N.length; k++)
+      if (Math.abs(dot3(N[i], crossV(N[j], N[k]))) > 0.5) return true;
+    return false;
+  };
   const vertexOf = (v0, shell) => {
     const key = v0 + shell * nv, v = vfind(key); let id = vertexId.get(v);
     if (id === undefined) {
@@ -100,7 +109,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
       // Junto a una faceta el vértice de la malla ya es exacto: ajustarlo a planos casi
       // paralelos lo desplazaría y podría cruzar caras.
       const start = group.length > 1 ? pos : P(v0), surf = regs.map(r => prims[r].S);
-      vertices.push(regs.some(r => prims[r].facet) ? start : (!globalThis.process?.env?.NOANALYTIC && cornerOnTangent(start, surf, tol)) || snapPoint(start, surf, maxMove));
+      vertices.push(regs.some(r => prims[r].facet) ? start : (!globalThis.process?.env?.NOANALYTIC && cornerOnTangent(start, surf, tol)) || snapPoint(start, surf, sharp(start, surf) ? maxMoveSharp : maxMove));
+      if (globalThis.BREPDEBUG) { const q = vertices[vertices.length - 1], e = Math.max(...surf.map(S => Math.abs(dist(S, q)))); if (e > 1e-6) console.log('vértice inexacto', q.map(x => x.toFixed(3)).join(','), 'error', e.toFixed(4), regs.map(r => r + ':' + prims[r].S.type + (prims[r].facet ? 'F' : '')).join(' ')); }
     }
     return id;
   };

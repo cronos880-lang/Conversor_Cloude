@@ -108,6 +108,15 @@ function analyticCircles(A, B) {
   return out;
 }
 
+/** Rectas exactas de la intersección de un plano con un cilindro de eje paralelo al plano. */
+function analyticLines(A, B) {
+  if (B.type === 'plane' && A.type === 'cylinder') [A, B] = [B, A];
+  if (A.type !== 'plane' || B.type !== 'cylinder' || Math.abs(dot(A.n, B.a)) > 1e-9) return [];
+  const h = dot(A.n, B.p) - A.d, q = B.r * B.r - h * h; if (q < 0) return [];
+  const foot = sub(B.p, mul(A.n, h)), side = cross(A.n, B.a), w = Math.sqrt(q);
+  return [{ p: add(foot, mul(side, w)), d: B.a }, { p: sub(foot, mul(side, w)), d: B.a }];
+}
+
 /** Arco o circunferencia { c, a, r } que pasa por los puntos (dentro de lim), o null. */
 function circleOn(C, pts, closed, lim) {
   const x0 = sub(pts[0], C.c), xr = sub(x0, mul(C.a, dot(x0, C.a))); if (norm(xr) < 1e-9) return null;
@@ -229,6 +238,14 @@ export function fitCurve(pts, closed, A, B, tol) {
   // La curva no puede alejarse de la poligonal más que la flecha de un arco razonable.
   const near = (mid, i) => { const c = sub(pts[i + 1], pts[i]); return norm(sub(mid, mul(add(pts[i], pts[i + 1]), 0.5))) <= Math.max(3 * tol, 0.13 * norm(c)); };
   let curve = null, dev = 0;
+  if (!closed && !globalThis.process?.env?.NOANALYTIC) {
+    for (const L of analyticLines(A, B)) {
+      const off = p => { const v = sub(p, L.p); return norm(sub(v, mul(L.d, dot(v, L.d)))); };
+      if (off(pts[0]) > 0.02 * tol || off(pts[pts.length - 1]) > 0.02 * tol || pts.some(p => off(p) > 3 * tol)) continue;
+      const d = sub(pts[pts.length - 1], pts[0]), len = norm(d); if (!(len > 0)) continue;
+      return { curve: { type: 'line', p: pts[0], d: mul(d, 1 / len) }, dev: 0, ok: true };
+    }
+  }
   if (!closed) {
     curve = lineFit(pts, tol);
     if (curve) {

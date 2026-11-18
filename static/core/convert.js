@@ -46,7 +46,7 @@ function prepare(positions, scale, onStatus, tolFactor = 1) {
 
 function build(state, name, polyFaces) {
   const { mesh, comp, seg } = state;
-  const brep = buildBrep(mesh, seg, comp, { polyFaces, polyGap: state.polyGap });
+  const brep = buildBrep(mesh, seg, comp, { polyFaces, polyGap: state.polyGap, move: state.move });
   let dev = 0; for (const e of brep.edges) if (!e.poly) dev = Math.max(dev, e.dev);
   const step = writeStep(brep, name, Math.max(1e-6, Math.min(dev, 1e-2)));
   const types = {}; for (const f of brep.faces) if (f.loops.length) types[f.S.type] = (types[f.S.type] || 0) + 1;
@@ -73,17 +73,18 @@ export function convert(positions, { scale = 1, name = 'pieza', onStatus = () =>
  * porque leer STEP enormes agota o corrompe la memoria del motor.
  */
 export async function convertValidated(positions, engine, options = {}) {
-  const first = await attempt(positions, engine, options, 1e-9);
-  // Si hubo que degradar caras, probar quitando también los puntos casi repetidos de los
-  // bordes poligonales (más juntos que la tolerancia del STEP) y quedarse con el mejor.
+  // Primer intento: vértices llevados con decisión a la intersección exacta de sus caras.
+  const first = await attempt(positions, engine, options, 1e-9, 3);
+  // Si hubo que degradar caras, probar con vértices más cerca de la malla y quitando también
+  // los puntos casi repetidos de los bordes poligonales, y quedarse con el mejor.
   if (!first.report.demoted || first.mesh.nt > 50000) return first;
   try {
-    const second = await attempt(positions, engine, { ...options, trace: null, dump: null }, 0.002);
+    const second = await attempt(positions, engine, { ...options, trace: null, dump: null }, 0.002, 1);
     return second.report.faces < first.report.faces ? second : first;
   } catch { return first; }
 }
 
-async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null, tolFactor = 1, facetRegions = null } = {}, polyGap = 1e-9) {
+async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null, tolFactor = 1, facetRegions = null } = {}, polyGap = 1e-9, move = 1) {
   const factory = typeof engine === 'function' ? engine : null;
   let oc = factory ? await factory() : engine, fresh = true;
   const check_ = async (step, brep, regionArea) => {
@@ -95,7 +96,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
     return r;
   };
   let mesh_ = { nt: 0 };
-  const state = prepare(positions, scale, onStatus, tolFactor); state.polyGap = polyGap;
+  const state = prepare(positions, scale, onStatus, tolFactor); state.polyGap = polyGap; state.move = move;
   const { mesh, seg } = state; mesh_ = mesh;
   // Solo para diagnóstico: pasar a facetas desde el principio las regiones indicadas.
   if (facetRegions) { const sel = new Set(); seg.prims.forEach((p, i) => { if (facetRegions(p, i)) sel.add(i); }); if (sel.size) demote(mesh, seg, sel); }
