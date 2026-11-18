@@ -6,9 +6,9 @@ Todo sigue ocurriendo en el navegador: sin instalaciones, sin cuentas y sin subi
 
 ## Versión descargable (sin conexión)
 
-[Descargar Conversor_Cloude C2 (ZIP, 7,7 MB)](https://github.com/cronos880-lang/Conversor_Cloude/blob/claude/adoring-fermat-ptg1ro/entrega/Conversor_Cloude_C2.zip?raw=true)
+[Descargar Conversor_Cloude C3 (ZIP)](https://github.com/cronos880-lang/Conversor_Cloude/blob/claude/adoring-fermat-ptg1ro/entrega/Conversor_Cloude_C3.zip?raw=true)
 
-Extrae todo el ZIP en una carpeta nueva y abre `Iniciar_Conversor.bat` (Windows). Arranca un servidor local mínimo con PowerShell, que ya viene con Windows, y abre el navegador; no instala nada ni necesita Python. En Linux o macOS usa `iniciar_conversor.sh` (requiere `python3`). Instrucciones en `LEEME_PRIMERO.txt` dentro del ZIP. El paquete se genera con `python tools/build_entrega.py C2`.
+Extrae todo el ZIP en una carpeta nueva y abre `Iniciar_Conversor.bat` (Windows). Arranca un servidor local mínimo con PowerShell, que ya viene con Windows, y abre el navegador; no instala nada ni necesita Python. En Linux o macOS usa `iniciar_conversor.sh` (requiere `python3`). Instrucciones en `LEEME_PRIMERO.txt` dentro del ZIP. El paquete se genera con `python tools/build_entrega.py C3`.
 
 ## Uso
 
@@ -31,7 +31,8 @@ Al terminar, la web indica cuántas caras tiene el STEP y de qué tipo son. El m
 - **No reconstruye el historial paramétrico ni las cotas.** El STEP es un sólido con caras reales, no un diseño con operaciones.
 - Las **formas libres u orgánicas** (superficies esculpidas, perfiles spline, dentados, roscas) no se reconocen: esas zonas quedan con caras planas, igual que en una conversión facetada clásica.
 - Los radios y ejes salen del ajuste a la malla; pueden diferir en centésimas del diseño original.
-- La importación en Onshape no se ha podido comprobar desde el entorno de desarrollo; la validación se hace con Open CASCADE.
+- Comprobado en Onshape (importación real por su API) con las piezas de prueba: maneta, Base y V_legoBrick4x2, que antes importaban con aviso, ya lo hacen sin él. No se garantiza para cualquier STL.
+- Las relaciones de diseño evidentes (planos paralelos o perpendiculares, ejes coaxiales, redondeos tangentes) se imponen exactamente cuando la malla lo permite.
 
 Límites: 100 MB y 400.000 triángulos. El STL no declara unidades: elige las correctas. El STEP se exporta en milímetros.
 
