@@ -221,6 +221,35 @@ export function regularize(mesh, seg) {
     }
   } }
 
+  // 4c) Triángulos degenerados (casi sin anchura) que cayeron en una región cuya superficie es
+  //     perpendicular a ellos: están sobre las dos superficies a la vez, pero dejarlos ahí crea
+  //     aristas superpuestas que Parasolid rechaza (Onshape llega a eliminar el trozo de sólido).
+  if (!globalThis.process?.env?.NOREASSIGN) for (let pass = 0; pass < 3; pass++) {
+    let moved = 0;
+    for (let t = 0; t < nt; t++) {
+      const r = reg[t]; if (!live(r)) continue;
+      const P = [0, 1, 2].map(k => { const v = T[t * 3 + k]; return [V[v * 3], V[v * 3 + 1], V[v * 3 + 2]]; });
+      const n = cross(sub(P[1], P[0]), sub(P[2], P[0])), l = norm(n); if (!(l > 0)) continue;
+      // Solo triángulos degenerados: altura menor que la tolerancia.
+      const longest = Math.max(norm(sub(P[1], P[0])), norm(sub(P[2], P[1])), norm(sub(P[0], P[2])));
+      if (l / longest > tol) continue;
+      const c = mul(add(add(P[0], P[1]), P[2]), 1 / 3), u = mul(n, 1 / l);
+      if (Math.abs(dot(u, normalAt(prims[r].S, c))) > 0.5) continue;
+      let to = -1;
+      for (let k = 0; k < 3; k++) {
+        const h = adj[t * 3 + k]; if (h < 0) continue; const q = reg[(h / 3) | 0];
+        // Solo entre planos: con superficies curvas el cambio altera contornos ya correctos.
+        if (q === r || !live(q) || prims[q].S.type !== 'plane' || prims[r].S.type !== 'plane') continue;
+        const S = prims[q].S;
+        if (Math.abs(dot(u, normalAt(S, c))) > 0.85 && P.every(p => Math.abs(dist(S, p)) <= tol)) { to = q; break; }
+      }
+      if (to < 0) continue;
+      if (globalThis.REDEBUG) console.log('reasigna', t, prims[r].S.type, '->', prims[to].S.type, (l / longest).toExponential(1), c.map(x => x.toFixed(2)).join(','));
+      reg[t] = to; tris[r].splice(tris[r].indexOf(t), 1); tris[to].push(t); area[r] -= mesh.A[t]; area[to] += mesh.A[t]; moved++; changes++;
+    }
+    if (!moved) break;
+  }
+
   // 5) Franjas planas diminutas junto a un redondeo que en realidad son facetas de él (la fila
   //    de triángulos que toca la cara tangente): se integran en la superficie curva.
   //    Se repite porque al unir uno aparecen vecinos nuevos.
