@@ -2,7 +2,7 @@
 // Pequeños errores de ajuste hacen que superficies que deberían ser paralelas, coaxiales o
 // tangentes se crucen ligeramente cerca de su borde común, y Parasolid (Onshape) rechaza el
 // sólido. Aquí se corrigen esos casos cuando la diferencia está dentro de la tolerancia.
-import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt } from './fit.js';
+import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt, fitPlane } from './fit.js';
 
 const RAD = Math.PI / 180;
 const axisOf = S => S.a, originOf = S => S.p || S.apex || S.c;
@@ -201,9 +201,30 @@ export function regularize(mesh, seg) {
       for (const target of [cur.r, -cur.r]) if (Math.abs(d0 - target) < 2 * tol && Math.abs(d0 - target) > 1e-12) { set(i, { ...cur, p: add(cur.p, mul(P.n, target - d0)) }); break; }
     }
   }
+  // 4b) Planos vecinos casi coplanarios (< 2°): abanicos de triángulos de la transición entre dos
+  //     caras se habían reconocido como planos aparte. Se unen si el plano común encaja.
+  for (let pass = 0, again = true; again && pass < 6 && !globalThis.process?.env?.NOCOPLANAR; pass++) { again = false; for (const i of order) {
+    if (!live(i) || prims[i].S.type !== 'plane') continue;
+    for (const j of nb[i]) {
+      if (j === i || !live(j) || prims[j].S.type !== 'plane' || area[j] < area[i]) continue;
+      const a = prims[i].S, b = prims[j].S, c = dot(a.n, b.n);
+      if (c < Math.cos(2 * RAD)) continue;
+      const pts = vertsOf(i).concat(vertsOf(j)), F = fitPlane(pts);
+      if (pts.some(p => Math.abs(dot(F.n, p) - F.d) > 2 * tol)) continue;
+      const n = dot(F.n, b.n) < 0 ? mul(F.n, -1) : F.n;
+      if (globalThis.COPDEBUG) console.log('coplanar', i, j, area[i].toFixed(2), area[j].toFixed(2), (Math.acos(Math.min(1, c)) / RAD).toFixed(3), (Math.acos(Math.min(1, dot(n, b.n))) / RAD).toFixed(3));
+      prims[j] = { ...prims[j], S: { type: 'plane', n, d: dot(n, F.o) } };
+      for (const t of tris[i]) { reg[t] = j; tris[j].push(t); }
+      area[j] += area[i]; area[i] = 0; tris[i] = []; changes++; again = true;
+      for (const k of nb[i]) if (k !== j) { nb[j].add(k); nb[k].add(j); }
+      break;
+    }
+  } }
+
   // 5) Franjas planas diminutas junto a un redondeo que en realidad son facetas de él (la fila
   //    de triángulos que toca la cara tangente): se integran en la superficie curva.
-  if (!globalThis.process?.env?.NOABSORB) for (const i of order) {
+  //    Se repite porque al unir uno aparecen vecinos nuevos.
+  for (let pass = 0, again = true; again && pass < 6 && !globalThis.process?.env?.NOABSORB; pass++) { again = false; for (const i of order) {
     if (!live(i) || prims[i].S.type !== 'plane') continue;
     let best = null;
     for (const j of nb[i]) {
@@ -222,8 +243,9 @@ export function regularize(mesh, seg) {
     }
     if (!best) continue;
     for (const t of tris[i]) { reg[t] = best.j; tris[best.j].push(t); }
-    area[best.j] += area[i]; area[i] = 0; tris[i] = []; changes++;
-  }
+    area[best.j] += area[i]; area[i] = 0; tris[i] = []; changes++; again = true;
+    for (const k of nb[i]) if (k !== best.j) { nb[best.j].add(k); nb[k].add(best.j); }
+  } }
   return changes;
 }
 void cross; void unit;
