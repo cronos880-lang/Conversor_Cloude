@@ -125,7 +125,16 @@ export function reexport(oc, stepText) {
     const shape = reader.OneShape();
     const ok = writer.Transfer(shape, oc.STEPControl_StepModelType.STEPControl_AsIs, true, progress) === done && writer.Write('/final_out.step') === done;
     shape.delete();
-    return ok ? oc.FS.readFile('/final_out.step', { encoding: 'utf8' }) : null;
+    if (!ok) return null;
+    // El STEP reescrito debe volver a leerse como sólido válido; si no, se conserva el original.
+    const back = new oc.STEPControl_Reader();
+    try {
+      if (back.ReadFile('/final_out.step') !== done || !back.TransferRoots(progress)) return null;
+      const s2 = back.OneShape(), check = new oc.BRepCheck_Analyzer(s2, true, false, false), valid = check.IsValid();
+      check.delete(); s2.delete();
+      if (!valid) return null;
+    } finally { back.delete(); }
+    return oc.FS.readFile('/final_out.step', { encoding: 'utf8' });
   } catch { return null; } finally {
     reader.delete(); writer.delete(); progress.delete();
     for (const f of ['/final_in.step', '/final_out.step']) { try { oc.FS.unlink(f); } catch { /* no existe */ } }

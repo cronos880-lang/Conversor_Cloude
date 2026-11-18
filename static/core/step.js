@@ -55,12 +55,38 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}
     const l = Math.hypot(m[0], m[1], m[2]);
     return l > 1e-6 ? mul(m, -1 / l) : perp(a);
   };
+  // Caras que solo ocupan un sector (redondeos, medias cañas): la costura en el centro del
+  // mayor hueco angular, fuera de la cara; una costura que la atraviesa la parte en dos al
+  // leerla y deja aristas diminutas.
+  const edgeSamples = e => {
+    const c = e.curve, P0 = brep.vertices[e.v0], P1 = brep.vertices[e.v1];
+    if (c.type === 'circle') {
+      const y = cross(c.a, c.x), ang = p => { const d = sub(p, c.c); return Math.atan2(dot(d, y), dot(d, c.x)); };
+      let t0 = ang(P0), t1 = ang(P1); if (e.v0 === e.v1) t1 = t0 + 2 * Math.PI; while (t1 <= t0) t1 += 2 * Math.PI;
+      const out = []; for (let k = 0; k <= 24; k++) { const t = t0 + (t1 - t0) * k / 24; out.push(add(c.c, add(mul(c.x, c.r * Math.cos(t)), mul(y, c.r * Math.sin(t))))); }
+      return out;
+    }
+    if (c.type === 'bspline') return c.ctrl;
+    return [P0, P1];
+  };
+  const seamGap = (o, a, f) => {
+    const e1 = perp(a), e2 = cross(a, e1), angs = [];
+    for (const loop of f.loops) for (const ref of loop) for (const p of edgeSamples(brep.edges[ref.edge])) {
+      const d = sub(p, o), x = dot(d, e1), y = dot(d, e2); if (Math.hypot(x, y) > 1e-9) angs.push(Math.atan2(y, x));
+    }
+    if (angs.length < 2) return null;
+    angs.sort((p, q) => p - q);
+    let best = 2 * Math.PI - (angs[angs.length - 1] - angs[0]), at = angs[angs.length - 1] + best / 2;
+    for (let i = 0; i + 1 < angs.length; i++) { const g = angs[i + 1] - angs[i]; if (g > best) { best = g; at = angs[i] + g / 2; } }
+    return best > 30 * Math.PI / 180 ? add(mul(e1, Math.cos(at)), mul(e2, Math.sin(at))) : null;
+  };
+  const seamDir = (o, a, f) => (f.seamAway ? seamAway(o, a, f) : (!globalThis.process?.env?.NOSEAM && seamGap(o, a, f)) || perp(a));
   const surface = (S, f) => {
     switch (S.type) {
       case 'plane': { const o = mul(S.n, S.d); return add_(`PLANE('',#${axis2(o, S.n, perp(S.n))})`); }
-      case 'cylinder': return add_(`CYLINDRICAL_SURFACE('',#${axis2(S.p, S.a, f.seamAway ? seamAway(S.p, S.a, f) : perp(S.a))},${num(S.r)})`);
+      case 'cylinder': return add_(`CYLINDRICAL_SURFACE('',#${axis2(S.p, S.a, seamDir(S.p, S.a, f))},${num(S.r)})`);
       case 'sphere': return add_(`SPHERICAL_SURFACE('',#${axis2(S.c, [0, 0, 1], [1, 0, 0])},${num(S.r)})`);
-      case 'torus': return add_(`TOROIDAL_SURFACE('',#${axis2(S.c, S.a, f.seamAway ? seamAway(S.c, S.a, f) : perp(S.a))},${num(S.R)},${num(S.r)})`);
+      case 'torus': return add_(`TOROIDAL_SURFACE('',#${axis2(S.c, S.a, seamDir(S.c, S.a, f))},${num(S.R)},${num(S.r)})`);
       case 'extrusion': {
         const c = S.curve, pts = c.ctrl.map(p => '#' + pt(p)).join(',');
         const curve = add_(`B_SPLINE_CURVE_WITH_KNOTS('',${c.degree},(${pts}),.UNSPECIFIED.,.F.,.F.,(${c.mults.join(',')}),(${c.knots.map(num).join(',')}),.UNSPECIFIED.)`);
@@ -71,7 +97,7 @@ export function writeStep(brep, name = 'pieza', uncertainty = 1e-6, options = {}
         let h = 0;
         for (const loop of f.loops) for (const ref of loop) for (const v of [brep.edges[ref.edge].v0, brep.edges[ref.edge].v1]) h = Math.max(h, dot(sub(brep.vertices[v], S.apex), S.a));
         if (!(h > 0)) h = 1;
-        return add_(`CONICAL_SURFACE('',#${axis2(add(S.apex, mul(S.a, h)), S.a, f.seamAway ? seamAway(S.apex, S.a, f) : perp(S.a))},${num(h * Math.tan(S.alpha))},${num(S.alpha)})`);
+        return add_(`CONICAL_SURFACE('',#${axis2(add(S.apex, mul(S.a, h)), S.a, seamDir(S.apex, S.a, f))},${num(h * Math.tan(S.alpha))},${num(S.alpha)})`);
       }
     }
     throw new Error('Superficie no admitida.');

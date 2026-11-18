@@ -1,5 +1,5 @@
 // Topología B-rep a partir de la segmentación: caras, bucles, aristas y vértices.
-import { fitCurve, snapPoint, toIntersection } from './curves.js';
+import { fitCurve, smoothCurve, snapPoint, toIntersection, cornerOnTangent } from './curves.js';
 import { dist, normalAt, cross as crossV, norm as normV } from './fit.js';
 import { perp, cross, add, mul } from './fit.js';
 
@@ -70,20 +70,44 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   const maxMove = (envNum('MOVE') || 0.25) * tol;          // esquinas
   const maxEdgeMove = (envNum('MOVEE') || 0.25) * tol;     // puntos intermedios de las aristas
   const vertices = [], vertexId = new Map();
+  // Aristas diminutas: más cortas que la tolerancia de sus vértices, Parasolid (Onshape) las
+  // considera un defecto. Se funden sus dos extremos en un solo vértice y la arista desaparece,
+  // salvo que algún contorno se quedara con menos de tres aristas.
+  const nv = mesh.nv, shortLimit = Math.max(0.01, Number(globalThis.process?.env?.SHORTK ?? 3) * tol);
+  const vparent = new Map(), vfind = k => { while (vparent.has(k)) k = vparent.get(k); return k; };
+  const collapsed = new Set(), members = new Map();
+  { const loopsOf = chains.map(() => []); const loopCount = [];
+    faces.forEach(f => f.loops.forEach(loop => { const id = loopCount.length; loopCount.push(loop.length); for (const ref of loop) loopsOf[ref.edge].push(id); }));
+    const lens = chains.map(({ vs }) => { let L = 0; for (let k = 0; k + 1 < vs.length; k++) { const p = P(vs[k]), q = P(vs[k + 1]); L += Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); } return L; });
+    const order = chains.map((_, i) => i).filter(i => lens[i] < shortLimit && chains[i].vs[0] !== chains[i].vs[chains[i].vs.length - 1]).sort((a, b) => lens[a] - lens[b]);
+    for (const i of order) {
+      if (loopsOf[i].some(l => loopCount[l] - 1 < 3)) continue;
+      const { vs, A } = chains[i], sh = compOfRegion[A] * nv;
+      const a = vfind(vs[0] + sh), b = vfind(vs[vs.length - 1] + sh);
+      if (a !== b) vparent.set(b, a);
+      collapsed.add(i); for (const l of loopsOf[i]) loopCount[l]--;
+    }
+  }
+  if (globalThis.BREPDEBUG) console.log('aristas cortas fundidas', collapsed.size, 'límite', shortLimit.toFixed(4));
   const vertexOf = (v0, shell) => {
-    const v = v0 + shell * mesh.nv; let id = vertexId.get(v);
+    const key = v0 + shell * nv, v = vfind(key); let id = vertexId.get(v);
     if (id === undefined) {
       id = vertices.length; vertexId.set(v, id);
+      // Vértices fundidos: posición media y superficies de todas sus esquinas.
+      const group = [...cornerRegions.keys()].filter(k => vfind(k) === v);
+      const regs = [...new Set(group.flatMap(k => [...cornerRegions.get(k)]))];
+      const pos = group.map(k => P(k % nv)).reduce((s, p) => [s[0] + p[0] / group.length, s[1] + p[1] / group.length, s[2] + p[2] / group.length], [0, 0, 0]);
       // Junto a una faceta el vértice de la malla ya es exacto: ajustarlo a planos casi
       // paralelos lo desplazaría y podría cruzar caras.
-      const regs = [...cornerRegions.get(v)];
-      vertices.push(regs.some(r => prims[r].facet) ? P(v0) : snapPoint(P(v0), regs.map(r => prims[r].S), maxMove));
+      const start = group.length > 1 ? pos : P(v0), surf = regs.map(r => prims[r].S);
+      vertices.push(regs.some(r => prims[r].facet) ? start : (!globalThis.process?.env?.NOANALYTIC && cornerOnTangent(start, surf, tol)) || snapPoint(start, surf, maxMove));
     }
     return id;
   };
   const edges = [], chainInfo = [];
   const same = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-9;
-  const chainEdges = chains.map(({ vs, A, B }) => {
+  const chainEdges = chains.map(({ vs, A, B }, ci) => {
+    if (collapsed.has(ci)) { vertexOf(vs[0], compOfRegion[A]); return []; }
     const SA = prims[A].S, SB = prims[B].S, closed = vs[0] === vs[vs.length - 1];
     const v0 = vertexOf(vs[0], compOfRegion[A]), v1 = vertexOf(vs[vs.length - 1], compOfRegion[A]);
     let pts = vs.map((v, i) => {
@@ -103,12 +127,15 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     };
     pts = thin(pts, 1e-9);
     let fit = null;
-    if (!polyFaces.has(A) && !polyFaces.has(B)) { fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null; }
+    if (!polyFaces.has(A) && !polyFaces.has(B)) {
+      fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null;
+      if (!fit && !globalThis.process?.env?.NOSMOOTH) fit = smoothCurve(pts, closed, SA, SB, tol, Math.max(0.1, 8 * tol));
+    }
     chainInfo.push({ A: SA.type, B: SB.type, kind: fit ? fit.curve.type : 'poly', n: pts.length, closed, len: +Math.hypot(...pts[0].map((x, i) => x - pts[pts.length - 1][i])).toFixed(3), resA: +(prims[A].res || 0).toExponential(1), resB: +(prims[B].res || 0).toExponential(1) });
     if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length, A, B }); return [edges.length - 1]; }
     // Poligonal: un segmento recto por cada arista de la malla.
     // Tramos más cortos que la tolerancia del STEP se fundirían al leerlo y dejarían aristas sueltas.
-    pts = thin(pts, options.polyGap ?? 1e-9);
+    pts = thin(pts, Math.max(options.polyGap ?? 1e-9, Number(globalThis.process?.env?.POLYMIN ?? 6) * tol));
     const ids = []; let prev = v0;
     for (let i = 1; i < pts.length; i++) {
       let cur = v1;

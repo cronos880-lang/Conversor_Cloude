@@ -72,6 +72,68 @@ function circleFit(pts, closed, tol) {
 }
 
 
+/**
+ * Circunferencia exacta de la intersección entre una superficie de revolución y un plano
+ * perpendicular a su eje, o entre dos superficies de revolución coaxiales tangentes.
+ * Devuelve candidatos { c, a, r } (puede haber dos en el toro).
+ */
+function analyticCircles(A, B) {
+  const rev = S => S.type === 'cylinder' || S.type === 'cone' || S.type === 'torus' || S.type === 'sphere';
+  const axisPt = S => S.p || S.apex || S.c;
+  if (B.type === 'plane' && rev(A)) [A, B] = [B, A];
+  const out = [];
+  if (A.type === 'plane' && rev(B)) {
+    const n = A.n, a = B.type === 'sphere' ? n : B.a;
+    if (Math.abs(dot(n, a)) < 1 - 1e-9) return out;
+    const o = axisPt(B), t = (A.d - dot(n, o)) / dot(n, a), c = add(o, mul(a, t));
+    if (B.type === 'cylinder') out.push(B.r);
+    else if (B.type === 'cone') { const h = dot(sub(c, B.apex), B.a); if (h > 0) out.push(h * Math.tan(B.alpha)); }
+    else if (B.type === 'sphere') { const h = dot(n, B.c) - A.d, q = B.r * B.r - h * h; out.push(Math.sqrt(Math.max(0, q))); }
+    else {
+      const h = dot(n, B.c) - A.d, q = B.r * B.r - h * h, w = Math.sqrt(Math.max(0, q));
+      // Plano tangente al tubo: el borde puede quedar en cualquier punto de la franja de contacto.
+      if (w < 1e-6) return [{ c, a, r: B.R, tangent: B.r }];
+      out.push(B.R - w, B.R + w);
+    }
+    return out.filter(r => r > 0).map(r => ({ c, a, r }));
+  }
+  if (rev(A) && rev(B) && A.type !== 'sphere' && B.type !== 'sphere') {
+    if (Math.abs(dot(A.a, B.a)) < 1 - 1e-9) return out;
+    const T = A.type === 'torus' ? A : B.type === 'torus' ? B : null, O = T === A ? B : A;
+    if (!T || O.type !== 'cylinder') return out;
+    const v = sub(T.c, O.p); if (norm(sub(v, mul(O.a, dot(v, O.a)))) > 1e-6) return out;
+    // Toro tangente al cilindro coaxial: la circunferencia de contacto está en el plano del centro.
+    if (Math.abs(Math.abs(T.R - O.r) - T.r) < 1e-6) out.push({ c: T.c, a: T.a, r: O.r, tangent: T.r });
+  }
+  return out;
+}
+
+/** Arco o circunferencia { c, a, r } que pasa por los puntos (dentro de lim), o null. */
+function circleOn(C, pts, closed, lim) {
+  const x0 = sub(pts[0], C.c), xr = sub(x0, mul(C.a, dot(x0, C.a))); if (norm(xr) < 1e-9) return null;
+  const ex = unit(xr), ey = cross(C.a, ex);
+  const n = closed ? pts.length - 1 : pts.length, ang = [];
+  for (let i = 0; i < n; i++) {
+    const v = sub(pts[i], C.c), h = dot(v, C.a), rad = Math.hypot(dot(v, ex), dot(v, ey));
+    if (Math.hypot(h, rad - C.r) > lim) return null;
+    ang.push(Math.atan2(dot(v, ey), dot(v, ex)));
+  }
+  let total = 0, sign = 0, widest = 0; const count = closed ? n : n - 1;
+  for (let i = 0; i < count; i++) {
+    let d = ang[(i + 1) % n] - ang[i];
+    while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+    if (d === 0) return null;
+    widest = Math.max(widest, Math.abs(d));
+    if (sign === 0) sign = Math.sign(d); else if (Math.sign(d) !== sign) return null;
+    total += d;
+  }
+  if (count >= 3 && widest > 0.6 * Math.abs(total)) return null;
+  if (closed && Math.abs(Math.abs(total) - 2 * Math.PI) > 1e-6) return null;
+  if (!closed && Math.abs(total) >= 2 * Math.PI - 1e-9) return null;
+  const axis = sign > 0 ? C.a : mul(C.a, -1);
+  return { type: 'circle', c: C.c, a: axis, x: ex, r: C.r, sweep: Math.abs(total) };
+}
+
 /** Punto común a A y B también cuando son tangentes (proyecciones alternadas). */
 function onIntersection(x, A, B) {
   let q = toIntersection(x, A, B);
@@ -186,6 +248,14 @@ export function fitCurve(pts, closed, A, B, tol) {
       curve = null;
     }
   }
+  // Intersección conocida analíticamente (redondeos tangentes, taladros perpendiculares...).
+  for (const C of globalThis.process?.env?.NOANALYTIC ? [] : analyticCircles(A, B)) {
+    // Los extremos (vértices ya calculados) deben estar sobre la circunferencia exacta.
+    const offC = p => { const v = sub(p, C.c), h = dot(v, C.a); return Math.hypot(h, norm(sub(v, mul(C.a, h))) - C.r); };
+    if (offC(pts[0]) > 0.02 * tol || offC(pts[pts.length - 1]) > 0.02 * tol) continue;
+    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol);
+    if (c && (closed || pts.length > 2 || c.sweep > 0.02)) return { curve: c, dev: 0, ok: true };
+  }
   curve = circleFit(pts, closed, tol);
   if (curve) {
     dev = 0; let ok = true;
@@ -217,4 +287,59 @@ export function fitCurve(pts, closed, A, B, tol) {
     P = next;
   }
   return { curve, dev, ok };
+}
+
+/**
+ * Curva suave de respaldo para cadenas que no siguen bien la intersección exacta: una sola
+ * B-spline por puntos espaciados al menos `gap`, sin vértices intermedios (que crearían
+ * aristas diminutas). Solo se acepta si se mantiene cerca de ambas superficies.
+ */
+export function smoothCurve(pts, closed, A, B, tol, gap) {
+  if (pts.length < 3) return null;
+  const last = pts[pts.length - 1], kept = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) if (norm(sub(pts[i], kept[kept.length - 1])) >= gap && norm(sub(pts[i], last)) >= gap) kept.push(pts[i]);
+  kept.push(last);
+  if (kept.length < 2 || norm(sub(kept[0], kept[1])) < 1e-9) return null;
+  const curve = splineFit(kept, closed, null, null);
+  const onBoth = p => Math.max(Math.abs(dist(A, p)), Math.abs(dist(B, p)));
+  let dev = 0;
+  for (let i = 0; i + 1 < kept.length; i++) {
+    const m = splineMid(curve, i), c = mul(add(kept[i], kept[i + 1]), 0.5);
+    if (norm(sub(m, c)) > Math.max(3 * tol, 0.13 * norm(sub(kept[i + 1], kept[i])))) return null;
+    dev = Math.max(dev, onBoth(m));
+  }
+  for (const p of pts) dev = Math.max(dev, onBoth(p));
+  return dev <= 4 * tol ? { curve, dev, ok: true } : null;
+}
+
+/**
+ * Vértice sobre el contacto de dos superficies tangentes (p. ej. redondeo y plano): la
+ * posición a lo ancho de la franja de contacto no queda definida por las superficies, así
+ * que se toma el punto de la circunferencia de contacto que está sobre las demás caras.
+ */
+export function cornerOnTangent(p, surfaces, tol) {
+  for (let i = 0; i < surfaces.length; i++) for (let j = i + 1; j < surfaces.length; j++) {
+    for (const C of analyticCircles(surfaces[i], surfaces[j])) {
+      if (!C.tangent) continue;
+      const band = Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol));
+      const v = sub(p, C.c), h = dot(v, C.a), rv = sub(v, mul(C.a, h)), rl = norm(rv);
+      if (rl < 1e-9 || Math.hypot(h, rl - C.r) > band) continue;
+      const ex = mul(rv, 1 / rl), ey = cross(C.a, ex), at = t => add(C.c, add(mul(ex, C.r * Math.cos(t)), mul(ey, C.r * Math.sin(t))));
+      const others = surfaces.filter((_, k) => k !== i && k !== j);
+      let t = 0;
+      if (others.length) {
+        const f = t => others.reduce((s, S) => s + dist(S, at(t)) ** 2, 0);
+        for (let it = 0; it < 30; it++) {
+          const e = 1e-7, g = (f(t + e) - f(t - e)) / (2 * e), H = (f(t + e) - 2 * f(t) + f(t - e)) / (e * e);
+          if (!(H > 0)) break;
+          const step = g / H; t -= Math.max(-0.05, Math.min(0.05, step));
+          if (Math.abs(step) < 1e-12) break;
+        }
+        if (!others.every(S => Math.abs(dist(S, at(t))) < Math.max(1e-6, 0.1 * tol))) continue;
+      }
+      const q = at(t);
+      if (norm(sub(q, p)) <= band) return q;
+    }
+  }
+  return null;
 }

@@ -45,14 +45,17 @@ SCRIPT = '''function(context is Context, queries) {
            "superficies" : size(evaluateQuery(context, qBodyType(qEverything(EntityType.BODY), BodyType.SHEET))), "tipos" : tipos };
 }'''
 
-def verificar(path, borrar=True):
+def verificar(path, borrar=False):
     d = documento(); p = pathlib.Path(path); t0 = time.time()
     with open(p, 'rb') as fh:
         blob = call('POST', f"/blobelements/d/{d['did']}/w/{d['wid']}", files={'file': (p.stem + '.step', fh, 'application/step')},
                     data={'encodedFilename': p.stem + '.step', 'translate': 'true', 'formatName': 'STEP', 'allowFaultyParts': 'true', 'flattenAssemblies': 'true', 'unit': 'millimeter'})
-    tr = call('GET', f"/translations/{blob['translationId']}")
-    while tr.get('requestState') == 'ACTIVE' and time.time() - t0 < 1200:
-        time.sleep(3); tr = call('GET', f"/translations/{blob['translationId']}")
+    # La cuenta gratuita tiene un cupo anual de llamadas: esperar según el tamaño y consultar pocas veces.
+    espera = min(240, 8 + p.stat().st_size / 150000); tr = {'requestState': 'ACTIVE'}
+    for intento in range(8):
+        time.sleep(espera); tr = call('GET', f"/translations/{blob['translationId']}")
+        if tr.get('requestState') != 'ACTIVE': break
+        espera = min(300, espera * 1.6)
     out = {'pieza': p.stem, 'traduccion': tr.get('requestState'), 'segundos': round(time.time() - t0)}
     creados = [blob['id']] + list(tr.get('resultElementIds') or [])
     try:
