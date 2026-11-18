@@ -81,7 +81,7 @@ export async function convertValidated(positions, engine, options = {}) {
   } catch { return first; }
 }
 
-async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null, tolFactor = 1 } = {}, polyGap = 1e-9) {
+async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus = () => {}, trace = null, maxRounds = Infinity, dump = null, tolFactor = 1, facetRegions = null } = {}, polyGap = 1e-9) {
   const factory = typeof engine === 'function' ? engine : null;
   let oc = factory ? await factory() : engine, fresh = true;
   const check_ = async (step, brep, regionArea) => {
@@ -95,6 +95,8 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
   let mesh_ = { nt: 0 };
   const state = prepare(positions, scale, onStatus, tolFactor); state.polyGap = polyGap;
   const { mesh, seg } = state; mesh_ = mesh;
+  // Solo para diagnóstico: pasar a facetas desde el principio las regiones indicadas.
+  if (facetRegions) { const sel = new Set(); seg.prims.forEach((p, i) => { if (facetRegions(p, i)) sel.add(i); }); if (sel.size) demote(mesh, seg, sel); }
   const polyFaces = new Set(); let demoted = 0, rounds = 0, good = null;
   // En mallas grandes cada ronda es cara: las caras defectuosas pasan directamente a facetas.
   const big = mesh.nt > 50000;
