@@ -37,15 +37,22 @@ SCRIPT = '''function(context is Context, queries) {
   var st = getFeatureStatus(context, makeId("%s"));
   var solids = qBodyType(qEverything(EntityType.BODY), BodyType.SOLID);
   var tipos = {};
+  var caras = [];
   for (var f in evaluateQuery(context, qOwnedByBody(solids, EntityType.FACE))) {
     var k = toString(evSurfaceDefinition(context, { "face" : f }).surfaceType);
     tipos[k] = (tipos[k] == undefined ? 0 : tipos[k]) + 1;
+    if (%s) {
+      var c = evApproximateCentroid(context, { "entities" : f });
+      caras = append(caras, [k, evArea(context, { "entities" : f }) / (millimeter ^ 2), c[0] / millimeter, c[1] / millimeter, c[2] / millimeter]);
+    }
   }
-  return { "estado" : toString(st.statusType), "motivo" : toString(st.statusEnum), "solidos" : size(evaluateQuery(context, solids)),
+  var vol = 0;
+  for (var b in evaluateQuery(context, solids)) { vol += evVolume(context, { "entities" : b }) / (millimeter ^ 3); }
+  return { "estado" : toString(st.statusType), "motivo" : toString(st.statusEnum), "solidos" : size(evaluateQuery(context, solids)), "volumen" : vol, "caras_detalle" : caras,
            "superficies" : size(evaluateQuery(context, qBodyType(qEverything(EntityType.BODY), BodyType.SHEET))), "tipos" : tipos };
 }'''
 
-def verificar(path, borrar=False):
+def verificar(path, borrar=False, detalle=False):
     d = documento(); p = pathlib.Path(path); t0 = time.time()
     with open(p, 'rb') as fh:
         blob = call('POST', f"/blobelements/d/{d['did']}/w/{d['wid']}", files={'file': (p.stem + '.step', fh, 'application/step')},
@@ -64,7 +71,7 @@ def verificar(path, borrar=False):
         base = f"/partstudios/d/{d['did']}/w/{d['wid']}/e/{ps}"
         feats = call('GET', base + '/features')['features']
         imp = [f['featureId'] for f in feats if f.get('featureType') == 'importForeign']
-        res = fs_value(call('POST', base + '/featurescript', json={'script': SCRIPT % imp[0], 'queries': {}})['result'])
+        res = fs_value(call('POST', base + '/featurescript', json={'script': SCRIPT % (imp[0], 'true' if detalle else 'false'), 'queries': {}})['result'])
         out.update(res); out['caras'] = sum((res.get('tipos') or {}).values())
         return out
     finally:
@@ -85,5 +92,10 @@ def limpiar():
 if __name__ == '__main__':
     cmd, files = sys.argv[1], sys.argv[2:]
     if cmd == 'limpiar': limpiar(); print('documento limpio')
-    elif cmd == 'verificar':
-        for f in files: print(json.dumps(verificar(f), ensure_ascii=False), flush=True)
+    elif cmd in ('verificar', 'detalle'):
+        for f in files:
+            r = verificar(f, detalle=cmd == 'detalle')
+            if cmd == 'detalle':
+                pathlib.Path(f).with_suffix('.onshape.json').write_text(json.dumps(r.pop('caras_detalle', []))); r['detalle'] = str(pathlib.Path(f).with_suffix('.onshape.json'))
+            else: r.pop('caras_detalle', None)
+            print(json.dumps(r, ensure_ascii=False), flush=True)

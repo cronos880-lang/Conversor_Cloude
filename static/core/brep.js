@@ -80,7 +80,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
   { const loopsOf = chains.map(() => []); const loopCount = [];
     faces.forEach(f => f.loops.forEach(loop => { const id = loopCount.length; loopCount.push(loop.length); for (const ref of loop) loopsOf[ref.edge].push(id); }));
     const lens = chains.map(({ vs }) => { let L = 0; for (let k = 0; k + 1 < vs.length; k++) { const p = P(vs[k]), q = P(vs[k + 1]); L += Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); } return L; });
-    const order = chains.map((_, i) => i).filter(i => lens[i] < shortLimit && chains[i].vs[0] !== chains[i].vs[chains[i].vs.length - 1]).sort((a, b) => lens[a] - lens[b]);
+    // Nunca junto a facetas: mover sus esquinas las dejaría alabeadas.
+    const order = chains.map((_, i) => i).filter(i => lens[i] < shortLimit && chains[i].vs[0] !== chains[i].vs[chains[i].vs.length - 1] && !prims[chains[i].A].facet && !prims[chains[i].B].facet).sort((a, b) => lens[a] - lens[b]);
     for (const i of order) {
       if (loopsOf[i].some(l => loopCount[l] - 1 < 3)) continue;
       const { vs, A } = chains[i], sh = compOfRegion[A] * nv;
@@ -145,7 +146,9 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     if (fit) { edges.push({ v0, v1, curve: fit.curve, dev: fit.dev, n: pts.length, A, B }); return [edges.length - 1]; }
     // Poligonal: un segmento recto por cada arista de la malla.
     // Tramos más cortos que la tolerancia del STEP se fundirían al leerlo y dejarían aristas sueltas.
-    pts = thin(pts, Math.max(options.polyGap ?? 1e-9, Number(globalThis.process?.env?.POLYMIN ?? 6) * tol));
+    // (Junto a facetas no: sus bordes deben pasar por todos los vértices de la malla.)
+    const facetSide = prims[A].facet || prims[B].facet;
+    pts = thin(pts, facetSide ? options.polyGap ?? 1e-9 : Math.max(options.polyGap ?? 1e-9, Number(globalThis.process?.env?.POLYMIN ?? 6) * tol));
     const ids = []; let prev = v0;
     for (let i = 1; i < pts.length; i++) {
       let cur = v1;
