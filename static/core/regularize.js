@@ -2,7 +2,7 @@
 // Pequeños errores de ajuste hacen que superficies que deberían ser paralelas, coaxiales o
 // tangentes se crucen ligeramente cerca de su borde común, y Parasolid (Onshape) rechaza el
 // sólido. Aquí se corrigen esos casos cuando la diferencia está dentro de la tolerancia.
-import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt, fitPlane } from './fit.js';
+import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt, fitPlane, project } from './fit.js';
 
 const RAD = Math.PI / 180;
 const axisOf = S => S.a, originOf = S => S.p || S.apex || S.c;
@@ -58,16 +58,20 @@ export function regularize(mesh, seg) {
   for (let h = 0; h < nt * 3; h++) { if (adj[h] < 0) continue; const a = reg[(h / 3) | 0], b = reg[(adj[h] / 3) | 0]; if (a !== b) { nb[a].add(b); nb[b].add(a); } }
 
   // 0) Planos casi paralelos o perpendiculares a planos mayores (< 0,5°): exactamente.
+  const big = [];
+  const snapNormal = n0 => {
+    let n = n0;
+    for (const d of big) {
+      const c = dot(n, d);
+      if (Math.abs(c) > Math.cos(0.5 * RAD) && Math.abs(c) < 1 - 1e-15) n = c < 0 ? mul(d, -1) : d;
+      else if (Math.abs(c) < Math.sin(0.5 * RAD) && Math.abs(c) > 1e-15) n = unit(sub(n, mul(d, c)));
+    }
+    return n;
+  };
   if (!globalThis.process?.env?.NOPLANE) {
-    const big = [];
     for (const i of prims.map((_, k) => k).filter(live).sort((a, b) => area[b] - area[a])) {
       const S = prims[i].S; if (S.type !== 'plane') continue;
-      let n = S.n;
-      for (const d of big) {
-        const c = dot(n, d);
-        if (Math.abs(c) > Math.cos(0.5 * RAD) && Math.abs(c) < 1 - 1e-15) n = c < 0 ? mul(d, -1) : d;
-        else if (Math.abs(c) < Math.sin(0.5 * RAD) && Math.abs(c) > 1e-15) n = unit(sub(n, mul(d, c)));
-      }
+      const n = snapNormal(S.n);
       if (n !== S.n) {
         const pts = vertsOf(i), m = pts.reduce((s2, p) => add(s2, mul(p, 1 / pts.length)), [0, 0, 0]);
         set(i, { ...S, n, d: dot(n, m) });
@@ -211,9 +215,10 @@ export function regularize(mesh, seg) {
       if (c < Math.cos(2 * RAD)) continue;
       const pts = vertsOf(i).concat(vertsOf(j)), F = fitPlane(pts);
       if (pts.some(p => Math.abs(dot(F.n, p) - F.d) > 2 * tol)) continue;
-      const n = dot(F.n, b.n) < 0 ? mul(F.n, -1) : F.n;
+      const n = snapNormal(dot(F.n, b.n) < 0 ? mul(F.n, -1) : F.n), m0 = pts.reduce((s2, p) => add(s2, mul(p, 1 / pts.length)), [0, 0, 0]);
+      if (pts.some(p => Math.abs(dot(n, p) - dot(n, m0)) > 2.5 * tol)) continue;
       if (globalThis.COPDEBUG) console.log('coplanar', i, j, area[i].toFixed(2), area[j].toFixed(2), (Math.acos(Math.min(1, c)) / RAD).toFixed(3), (Math.acos(Math.min(1, dot(n, b.n))) / RAD).toFixed(3));
-      prims[j] = { ...prims[j], S: { type: 'plane', n, d: dot(n, F.o) } };
+      prims[j] = { ...prims[j], S: { type: 'plane', n, d: dot(n, m0) } };
       for (const t of tris[i]) { reg[t] = j; tris[j].push(t); }
       area[j] += area[i]; area[i] = 0; tris[i] = []; changes++; again = true;
       for (const k of nb[i]) if (k !== j) { nb[j].add(k); nb[k].add(j); }
