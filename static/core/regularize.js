@@ -326,6 +326,9 @@ export function regularize(mesh, seg) {
     if (!moved) break;
   }
 
+  // Anchura media de una región: área / diagonal de su caja.
+  const stripWidth = i => { const pts = vertsOf(i); if (!pts.length) return Infinity; const a = [Infinity, Infinity, Infinity], b = [-Infinity, -Infinity, -Infinity]; for (const p of pts) for (let k = 0; k < 3; k++) { a[k] = Math.min(a[k], p[k]); b[k] = Math.max(b[k], p[k]); } return area[i] / Math.max(1e-9, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])); };
+
   // 5) Franjas planas diminutas junto a un redondeo que en realidad son facetas de él (la fila
   //    de triángulos que toca la cara tangente): se integran en la superficie curva.
   //    Se repite porque al unir uno aparecen vecinos nuevos.
@@ -333,9 +336,11 @@ export function regularize(mesh, seg) {
     if (!live(i) || prims[i].S.type !== 'plane') continue;
     let best = null;
     for (const j of nb[i]) {
-      if (!live(j) || prims[j].S.type === 'plane' || area[i] > 0.05 * area[j]) continue;
+      // Franjas diminutas (≤5 % del vecino, 1,5·tol) o tiras largas y estrechas (≤50 %, 2·tol).
+      const strip = !globalThis.process?.env?.NOSTRIP && stripWidth(i) < Math.max(0.5, 30 * tol);
+      if (!live(j) || prims[j].S.type === 'plane' || area[i] > (strip ? 0.5 : 0.05) * area[j]) continue;
       const w = worst(i, prims[j].S);
-      if (!(w <= 1.5 * tol) || (best && w >= best.w)) continue;
+      if (!(w <= (strip ? 2 : 1.5) * tol) || (best && w >= best.w)) continue;
       // Cada triángulo debe estar orientado como la superficie curva en ese punto.
       const S = prims[j].S;
       const aligned = tris[i].every(t => {
