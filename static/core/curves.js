@@ -242,6 +242,28 @@ export function snapPoint(p, surfaces, maxMove) {
   return x;
 }
 
+/** Curva exacta de intersección (recta o circunferencia analíticas) si la cadena la sigue, o null. */
+export function exactCurve(pts, closed, A, B, tol, tangentOnly = false) {
+  if (!closed && !tangentOnly && !globalThis.process?.env?.NOANALYTIC) {
+    for (const L of analyticLines(A, B, tol)) {
+      const off = p => { const v = sub(p, L.p); return norm(sub(v, mul(L.d, dot(v, L.d)))); };
+      if (off(pts[0]) > 0.02 * tol || off(pts[pts.length - 1]) > 0.02 * tol || pts.some(p => off(p) > L.band)) continue;
+      const d = sub(pts[pts.length - 1], pts[0]), len = norm(d); if (!(len > 0)) continue;
+      return { curve: { type: 'line', p: pts[0], d: mul(d, 1 / len) }, dev: 0, ok: true };
+    }
+  }
+  // Intersección conocida analíticamente (redondeos tangentes, taladros perpendiculares...).
+  for (const C of globalThis.process?.env?.NOANALYTIC ? [] : analyticCircles(A, B)) {
+    // Los extremos (vértices ya calculados) deben estar sobre la circunferencia exacta.
+    if (tangentOnly && !C.tangent) continue;
+    const offC = p => { const v = sub(p, C.c), h = dot(v, C.a); return Math.hypot(h, norm(sub(v, mul(C.a, h))) - C.r); };
+    if (offC(pts[0]) > 0.02 * tol || offC(pts[pts.length - 1]) > 0.02 * tol) continue;
+    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol, C.tangent ? 0.08 : 0);
+    if (c && (closed || pts.length > 2 || c.sweep > 0.02)) return { curve: c, dev: 0, ok: true };
+  }
+  return null;
+}
+
 /**
  * Curva para una cadena de puntos entre las superficies A y B. Los extremos se
  * respetan exactamente. Devuelve la curva, `dev` (desviación máxima medida
@@ -252,14 +274,7 @@ export function fitCurve(pts, closed, A, B, tol) {
   // La curva no puede alejarse de la poligonal más que la flecha de un arco razonable.
   const near = (mid, i) => { const c = sub(pts[i + 1], pts[i]); return norm(sub(mid, mul(add(pts[i], pts[i + 1]), 0.5))) <= Math.max(3 * tol, 0.13 * norm(c)); };
   let curve = null, dev = 0;
-  if (!closed && !globalThis.process?.env?.NOANALYTIC) {
-    for (const L of analyticLines(A, B, tol)) {
-      const off = p => { const v = sub(p, L.p); return norm(sub(v, mul(L.d, dot(v, L.d)))); };
-      if (off(pts[0]) > 0.02 * tol || off(pts[pts.length - 1]) > 0.02 * tol || pts.some(p => off(p) > L.band)) continue;
-      const d = sub(pts[pts.length - 1], pts[0]), len = norm(d); if (!(len > 0)) continue;
-      return { curve: { type: 'line', p: pts[0], d: mul(d, 1 / len) }, dev: 0, ok: true };
-    }
-  }
+  { const ex = exactCurve(pts, closed, A, B, tol); if (ex) return ex; }
   if (!closed) {
     curve = lineFit(pts, tol);
     if (curve) {
@@ -278,14 +293,6 @@ export function fitCurve(pts, closed, A, B, tol) {
       }
       curve = null;
     }
-  }
-  // Intersección conocida analíticamente (redondeos tangentes, taladros perpendiculares...).
-  for (const C of globalThis.process?.env?.NOANALYTIC ? [] : analyticCircles(A, B)) {
-    // Los extremos (vértices ya calculados) deben estar sobre la circunferencia exacta.
-    const offC = p => { const v = sub(p, C.c), h = dot(v, C.a); return Math.hypot(h, norm(sub(v, mul(C.a, h))) - C.r); };
-    if (offC(pts[0]) > 0.02 * tol || offC(pts[pts.length - 1]) > 0.02 * tol) continue;
-    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol, C.tangent ? 0.08 : 0);
-    if (c && (closed || pts.length > 2 || c.sweep > 0.02)) return { curve: c, dev: 0, ok: true };
   }
   curve = circleFit(pts, closed, tol);
   if (curve) {

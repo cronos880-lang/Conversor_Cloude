@@ -1,5 +1,5 @@
 // Topología B-rep a partir de la segmentación: caras, bucles, aristas y vértices.
-import { fitCurve, smoothCurve, snapPoint, toIntersection, cornerOnTangent } from './curves.js';
+import { fitCurve, exactCurve, smoothCurve, snapPoint, toIntersection, cornerOnTangent } from './curves.js';
 import { dist, normalAt, cross as crossV, norm as normV, dot as dot3 } from './fit.js';
 import { perp, cross, add, mul } from './fit.js';
 
@@ -138,7 +138,9 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     };
     pts = thin(pts, 1e-9);
     let fit = null;
-    if (!polyFaces.has(A) && !polyFaces.has(B)) {
+    // En caras degradadas a contorno poligonal se conservan los contactos tangentes exactos (vuelta completa).
+    if (polyFaces.has(A) || polyFaces.has(B)) { if (closed && !prims[A].facet && !prims[B].facet && !globalThis.process?.env?.NOKEEPEXACT) fit = exactCurve(pts, closed, SA, SB, tol, true); }
+    else {
       fit = fitCurve(pts, closed, SA, SB, tol); if (!fit.ok) fit = null;
       if (!fit && !globalThis.process?.env?.NOSMOOTH) fit = smoothCurve(pts, closed, SA, SB, tol, Math.max(0.1, 8 * tol));
     }
