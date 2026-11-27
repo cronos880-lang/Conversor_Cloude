@@ -6,9 +6,9 @@ Todo sigue ocurriendo en el navegador: sin instalaciones, sin cuentas y sin subi
 
 ## Versión descargable (sin conexión)
 
-[Descargar Conversor_Cloude C6 (ZIP)](https://github.com/cronos880-lang/Conversor_Cloude/blob/claude/adoring-fermat-ptg1ro/entrega/Conversor_Cloude_C6.zip?raw=true)
+[Descargar Conversor_Cloude C7 (ZIP)](https://github.com/cronos880-lang/Conversor_Cloude/blob/claude/adoring-fermat-ptg1ro/entrega/Conversor_Cloude_C7.zip?raw=true)
 
-Extrae todo el ZIP en una carpeta nueva y abre `Iniciar_Conversor.bat` (Windows). Arranca un servidor local mínimo con PowerShell, que ya viene con Windows, y abre el navegador; no instala nada ni necesita Python. En Linux o macOS usa `iniciar_conversor.sh` (requiere `python3`). Instrucciones en `LEEME_PRIMERO.txt` dentro del ZIP. El paquete se genera con `python tools/build_entrega.py C6`.
+Extrae todo el ZIP en una carpeta nueva y abre `Iniciar_Conversor.bat` (Windows). Arranca un servidor local mínimo con PowerShell, que ya viene con Windows, y abre el navegador; no instala nada ni necesita Python. En Linux o macOS usa `iniciar_conversor.sh` (requiere `python3`). Instrucciones en `LEEME_PRIMERO.txt` dentro del ZIP. El paquete se genera con `python tools/build_entrega.py C7`.
 
 ## Uso
 
