@@ -13,11 +13,25 @@ const SPLIT_FACES = !!globalThis.process?.env?.SPLIT_FACES;
 const EDGE_LIMIT = Number(globalThis.process?.env?.EDGE_LIMIT) || 0.1; // mm (EDGE_LIMIT: solo pruebas)
 
 /** Regiones curvas con alguna arista cuya desviación supera `limit`. */
-function looseRegions(brep, prims, limit) {
+function looseRegions(brep, prims, limit, regionArea = null) {
   const out = new Set();
-  for (const f of brep.faces) {
-    if (f.S.type === 'plane' || prims[f.region].facet) continue;
-    if (f.loops.some(loop => loop.some(ref => brep.edges[ref.edge].dev > limit))) out.add(f.region);
+  if (!regionArea || globalThis.process?.env?.LOOSEBOTH) {
+    for (const f of brep.faces) {
+      if (f.S.type === 'plane' || prims[f.region].facet) continue;
+      if (f.loops.some(loop => loop.some(ref => brep.edges[ref.edge].dev > limit))) out.add(f.region);
+    }
+    return out;
+  }
+  // Por cada borde separado se degrada solo la cara curva más pequeña de las dos: las caras
+  // grandes (el cuerpo de la pieza) se conservan y la zona problemática pasa a facetas exactas.
+  const facesOf = new Map();
+  for (const f of brep.faces) for (const loop of f.loops) for (const ref of loop) { const l = facesOf.get(ref.edge); if (l) l.push(f.region); else facesOf.set(ref.edge, [f.region]); }
+  for (const [e, regs] of facesOf) {
+    if (!(brep.edges[e].dev > limit)) continue;
+    const cand = regs.filter(r => prims[r].S.type !== 'plane' && !prims[r].facet);
+    if (!cand.length) continue;
+    cand.sort((a, b) => regionArea[a] - regionArea[b]);
+    out.add(cand[0]);
   }
   return out;
 }
@@ -116,7 +130,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
     const check = await check_(out.step, out.brep, regionArea);
     // Holguras: una cara curva cuyos bordes se separan de la superficie más de lo que
     // admiten otros programas CAD (Onshape/Parasolid) se trata como defectuosa.
-    for (const r of looseRegions(out.brep, seg.prims, EDGE_LIMIT)) { check.bad.add(r); if (!check.reason.has(r)) check.reason.set(r, 'holgura'); }
+    for (const r of looseRegions(out.brep, seg.prims, EDGE_LIMIT, regionArea)) { check.bad.add(r); if (!check.reason.has(r)) check.reason.set(r, 'holgura'); }
     const volumeOk = Math.abs(check.volume - mesh.volume) <= 0.02 * Math.abs(mesh.volume);
     const areaOk = Math.abs(check.area - mesh.area) <= 0.02 * mesh.area;
     const solid = check.valid && volumeOk && areaOk;
