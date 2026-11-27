@@ -3,7 +3,7 @@
 // tangentes se crucen ligeramente cerca de su borde común, y Parasolid (Onshape) rechaza el
 // sólido. Aquí se corrigen esos casos cuando la diferencia está dentro de la tolerancia.
 import { filletMaker } from './revolve.js';
-import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt, fitPlane, project } from './fit.js';
+import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt, fitPlane, project, refine } from './fit.js';
 
 const RAD = Math.PI / 180;
 const axisOf = S => S.a, originOf = S => S.p || S.apex || S.c;
@@ -241,6 +241,36 @@ export function regularize(mesh, seg) {
       break;
     }
   } }
+
+  // 4e) Cara plana con un pliegue de menos de 2° respecto a un cilindro muy suave: si todo cabe
+  //     en un único cilindro reajustado, es la misma cara (el STL la dibujó plana por tener pocos
+  //     triángulos) y se une, para que quede como una sola cara editable.
+  if (!globalThis.process?.env?.NOGENTLE) for (const j of order) {
+    if (!live(j) || prims[j].S.type !== 'cylinder' || prims[j].S.r < 2000 * tol) continue;
+    const C = prims[j].S, cands = [];
+    for (const i of nb[j]) {
+      if (!live(i) || prims[i].S.type !== 'plane' || area[i] > area[j]) continue;
+      const Pl = prims[i].S; if (Math.abs(dot(Pl.n, C.a)) > Math.sin(2 * RAD)) continue;
+      const pi = vertsOf(i); if (!pi.length) continue;
+      const m = pi.reduce((s2, p) => add(s2, mul(p, 1 / pi.length)), [0, 0, 0]);
+      if (Math.acos(Math.min(1, Math.abs(dot(Pl.n, normalAt(C, project(C, m)))))) > 4 * RAD) continue;
+      cands.push(i);
+    }
+    if (!cands.length) continue;
+    // Todas juntas (las piezas suelen ser simétricas) y, si no cabe, cada una por separado.
+    const tryMerge = list => {
+      const all = vertsOf(j).concat(...list.map(vertsOf)), C2 = cylinderWithAxis(all, prims[j].S.a);
+      if (!C2 || C2.type !== 'cylinder' || all.some(p => Math.abs(dist(C2, p)) > 3.5 * tol)) return false;
+      prims[j] = { ...prims[j], S: C2 };
+      for (const i of list) {
+        for (const t of tris[i]) { reg[t] = j; tris[j].push(t); }
+        area[j] += area[i]; area[i] = 0; tris[i] = []; changes++;
+        for (const k of nb[i]) if (k !== j) { nb[j].add(k); nb[k].add(j); }
+      }
+      return true;
+    };
+    if (!tryMerge(cands)) for (const i of cands) tryMerge([i]);
+  }
 
   // 4d) Pliegue rasante (0,5°–5°) entre una cara plana y un cilindro de eje paralelo a ella: el
   //     plano gira alrededor de la recta del pliegue que marca la malla (sobre el cilindro), para
