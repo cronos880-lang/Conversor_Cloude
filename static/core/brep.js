@@ -13,7 +13,8 @@ import { perp, cross, add, mul } from './fit.js';
 export function buildBrep(mesh, seg, comp, options = {}) {
   const polyFaces = options.polyFaces || new Set();
   const { V, T, adj, nt } = mesh, { reg, prims, tol } = seg;
-  const P = i => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]];
+  const moved = options.moved;
+  const P = i => (moved && moved.get(i)) || [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]];
   const next = h => (h % 3 === 2 ? h - 2 : h + 1);
   const regOf = h => reg[(h / 3) | 0];
   const boundary = h => regOf(h) !== regOf(adj[h]);

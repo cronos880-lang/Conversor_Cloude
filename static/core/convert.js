@@ -6,6 +6,7 @@ import { writeStep } from './step.js';
 import { validate, reexport } from './validate.js';
 import { findExtrusions } from './extrude.js';
 import { regularize } from './regularize.js';
+import { exactFacetJoins } from './seam.js';
 
 // Dividir caras que fallan: desactivado (en el chasis un trozo de toro se interpretaba al revés).
 const SPLIT_FACES = !!globalThis.process?.env?.SPLIT_FACES;
@@ -46,7 +47,8 @@ function prepare(positions, scale, onStatus, tolFactor = 1) {
 
 function build(state, name, polyFaces) {
   const { mesh, comp, seg } = state;
-  const brep = buildBrep(mesh, seg, comp, { polyFaces, polyGap: state.polyGap, move: state.move });
+  const moved = globalThis.process?.env?.NOJOIN ? null : exactFacetJoins(mesh, seg);
+  const brep = buildBrep(mesh, seg, comp, { polyFaces, polyGap: state.polyGap, move: state.move, moved });
   let dev = 0; for (const e of brep.edges) if (!e.poly) dev = Math.max(dev, e.dev);
   const step = writeStep(brep, name, Math.max(1e-6, Math.min(dev, 1e-2)));
   const types = {}; for (const f of brep.faces) if (f.loops.length) types[f.S.type] = (types[f.S.type] || 0) + 1;
