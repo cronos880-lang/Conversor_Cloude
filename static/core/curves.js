@@ -356,6 +356,24 @@ export function smoothCurve(pts, closed, A, B, tol, gap) {
  * que se toma el punto de la circunferencia de contacto que está sobre las demás caras.
  */
 export function cornerOnTangent(p, surfaces, tol) {
+  // Pliegue rasante ajustado en la regularización (plano marcado con su cilindro): el vértice
+  // sobre la recta exacta del pliegue, cortada por la tercera cara, como mucho a 1 mm.
+  if (surfaces.length === 3 && !globalThis.process?.env?.NOCREASE) for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) {
+    const Pl = surfaces[i].type === 'plane' ? surfaces[i] : surfaces[j], Cy = Pl === surfaces[i] ? surfaces[j] : surfaces[i];
+    if (Pl.creaseOf !== Cy) continue;
+    const o = surfaces[3 - i - j];
+    for (const L of analyticLines(Pl, Cy, tol)) {
+      const v0 = sub(p, L.p), t0 = dot(v0, L.d); if (norm(sub(v0, mul(L.d, t0))) > Math.min(1, L.band)) continue;
+      if (Math.abs(dot(normalAt(o, add(L.p, mul(L.d, t0))), L.d)) < 0.3) continue;
+      let t = t0;
+      for (let it = 0; it < 30; it++) {
+        const x = add(L.p, mul(L.d, t)), f = dist(o, x), g = dot(normalAt(o, x), L.d);
+        if (Math.abs(g) < 1e-9) break; const step = f / g; t -= step; if (Math.abs(step) < 1e-13) break;
+      }
+      const q = add(L.p, mul(L.d, t));
+      if (Math.abs(dist(o, q)) < 1e-7 && norm(sub(q, p)) <= Math.min(1, L.band)) return q;
+    }
+  }
   for (let i = 0; i < surfaces.length; i++) for (let j = i + 1; j < surfaces.length; j++) {
     for (const C of analyticCircles(surfaces[i], surfaces[j])) {
       if (!C.tangent) continue;

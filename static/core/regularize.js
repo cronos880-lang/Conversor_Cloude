@@ -242,6 +242,31 @@ export function regularize(mesh, seg) {
     }
   } }
 
+  // 4d) Pliegue rasante (0,5°–5°) entre una cara plana y un cilindro de eje paralelo a ella: el
+  //     plano gira alrededor de la recta del pliegue que marca la malla (sobre el cilindro), para
+  //     que la intersección exacta caiga donde está el borde real y no a casi un milímetro.
+  if (!globalThis.process?.env?.NOCREASE) for (const i of order) {
+    if (!live(i) || prims[i].S.type !== 'plane') continue;
+    for (const j of nb[i]) {
+      if (!live(j) || prims[j].S.type !== 'cylinder') continue;
+      const P = prims[i].S, C = prims[j].S;
+      // Solo superficies curvas muy suaves (radio grande): en cilindros pequeños la esquina ya está bien definida.
+      if (Math.abs(dot(P.n, C.a)) > 1e-9 || C.r < 500 * tol) continue;
+      const crease = [];
+      for (const t of tris[i]) for (let k = 0; k < 3; k++) { const h2 = adj[t * 3 + k]; if (h2 >= 0 && reg[(h2 / 3) | 0] === j) { for (const v of [T[t * 3 + k], T[t * 3 + (k + 1) % 3]]) crease.push([V[v * 3], V[v * 3 + 1], V[v * 3 + 2]]); } }
+      if (crease.length < 2) continue;
+      const m = crease.reduce((s2, p) => add(s2, mul(p, 1 / crease.length)), [0, 0, 0]), q = project(C, m);
+      const ang = Math.acos(Math.min(1, Math.abs(dot(P.n, normalAt(C, q)))));
+      if (ang < 0.5 * RAD || ang > 5 * RAD) continue;
+      const nb0 = unit(sub(P.n, mul(C.a, dot(P.n, C.a)))), nb1 = cross(C.a, nb0), pts = vertsOf(i);
+      const make = t => { const n = add(mul(nb0, Math.cos(t)), mul(nb1, Math.sin(t))); return { type: 'plane', n, d: dot(n, q), creaseOf: C }; };
+      const err = t => { const Q = make(t); return pts.reduce((mx, p) => Math.max(mx, Math.abs(dot(Q.n, p) - Q.d)), 0); };
+      let a2 = -3 * RAD, b2 = 3 * RAD;
+      for (let k = 0; k < 60; k++) { const m1 = a2 + (b2 - a2) / 3, m2 = b2 - (b2 - a2) / 3; if (err(m1) < err(m2)) b2 = m2; else a2 = m1; }
+      if (set(i, make((a2 + b2) / 2))) break;
+    }
+  }
+
   // 4c) Triángulos degenerados (casi sin anchura) que cayeron en una región cuya superficie es
   //     perpendicular a ellos: están sobre las dos superficies a la vez, pero dejarlos ahí crea
   //     aristas superpuestas que Parasolid rechaza (Onshape llega a eliminar el trozo de sólido).
