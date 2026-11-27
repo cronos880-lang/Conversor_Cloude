@@ -1,4 +1,5 @@
 // Ajuste de curvas a las cadenas de aristas que separan dos superficies.
+import { coaxialCircles } from './revolve.js';
 import { dist, normalAt, project, fitPlane, fitCircle2D, dot, sub, add, mul, cross, unit, norm, perp, solve } from './fit.js';
 
 /** Lleva x a la intersección de las superficies A y B (iteración de Newton). */
@@ -78,6 +79,13 @@ function circleFit(pts, closed, tol) {
  * Devuelve candidatos { c, a, r } (puede haber dos en el toro).
  */
 function analyticCircles(A, B) {
+  const known = analyticCirclesBasic(A, B);
+  if (known.length || globalThis.process?.env?.NOCOAX) return known;
+  // Cualquier otra pareja coaxial (cono–toro, cono–cilindro, toro–toro...): corte de perfiles.
+  return coaxialCircles(A, B);
+}
+
+function analyticCirclesBasic(A, B) {
   const rev = S => S.type === 'cylinder' || S.type === 'cone' || S.type === 'torus' || S.type === 'sphere';
   const axisPt = S => S.p || S.apex || S.c;
   if (B.type === 'plane' && rev(A)) [A, B] = [B, A];
@@ -120,7 +128,7 @@ function analyticLines(A, B, tol = 0) {
 }
 
 /** Arco o circunferencia { c, a, r } que pasa por los puntos (dentro de lim), o null. */
-function circleOn(C, pts, closed, lim) {
+function circleOn(C, pts, closed, lim, back = 0) {
   const x0 = sub(pts[0], C.c), xr = sub(x0, mul(C.a, dot(x0, C.a))); if (norm(xr) < 1e-9) return null;
   const ex = unit(xr), ey = cross(C.a, ex);
   const n = closed ? pts.length - 1 : pts.length, ang = [];
@@ -135,9 +143,13 @@ function circleOn(C, pts, closed, lim) {
     while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
     if (d === 0) return null;
     widest = Math.max(widest, Math.abs(d));
+    // En contactos tangentes la cadena de la malla puede retroceder un poco en ángulo.
+    if (Math.abs(d) <= back) { total += d; continue; }
     if (sign === 0) sign = Math.sign(d); else if (Math.sign(d) !== sign) return null;
     total += d;
   }
+  if (sign === 0) sign = Math.sign(total) || 1;
+  if (sign * total <= 0) return null;
   if (count >= 3 && widest > 0.6 * Math.abs(total)) return null;
   if (closed && Math.abs(Math.abs(total) - 2 * Math.PI) > 1e-6) return null;
   if (!closed && Math.abs(total) >= 2 * Math.PI - 1e-9) return null;
@@ -272,7 +284,7 @@ export function fitCurve(pts, closed, A, B, tol) {
     // Los extremos (vértices ya calculados) deben estar sobre la circunferencia exacta.
     const offC = p => { const v = sub(p, C.c), h = dot(v, C.a); return Math.hypot(h, norm(sub(v, mul(C.a, h))) - C.r); };
     if (offC(pts[0]) > 0.02 * tol || offC(pts[pts.length - 1]) > 0.02 * tol) continue;
-    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol);
+    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol, C.tangent ? 0.08 : 0);
     if (c && (closed || pts.length > 2 || c.sweep > 0.02)) return { curve: c, dev: 0, ok: true };
   }
   curve = circleFit(pts, closed, tol);

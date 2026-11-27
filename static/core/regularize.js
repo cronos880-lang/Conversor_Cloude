@@ -2,6 +2,7 @@
 // Pequeños errores de ajuste hacen que superficies que deberían ser paralelas, coaxiales o
 // tangentes se crucen ligeramente cerca de su borde común, y Parasolid (Onshape) rechaza el
 // sólido. Aquí se corrigen esos casos cuando la diferencia está dentro de la tolerancia.
+import { filletMaker } from './revolve.js';
 import { dot, sub, add, mul, cross, norm, unit, dist, perp, solve, cylinderWithAxis, normalAt, fitPlane, project } from './fit.js';
 
 const RAD = Math.PI / 180;
@@ -83,13 +84,15 @@ export function regularize(mesh, seg) {
   // 1) Ejes de revolución casi paralelos a una dirección de referencia (normales de planos
   //    grandes y ejes de regiones mayores) -> exactamente paralelos.
   const order = prims.map((_, i) => i).filter(live).sort((a, b) => area[b] - area[a]);
+  // Primero todas las direcciones de los planos grandes, para que un eje de revolución muy grande
+  // no imponga su pequeña inclinación al resto.
   const refs = [], planeRefs = [];
+  for (const i of order) { const S = prims[i].S; if (S.type === 'plane' && area[i] > 0.005 * mesh.area) { refs.push(S.n); planeRefs.push(S.n); } }
   for (const i of order) {
     const S = prims[i].S;
-    if (S.type === 'plane' && area[i] > 0.005 * mesh.area) { refs.push(S.n); planeRefs.push(S.n); }
     if (!isRev(S)) continue;
     let a = axisOf(S), best = null;
-    for (const d of refs) { const c = Math.abs(dot(a, d)); if (c > Math.cos(1.5 * RAD) && c < 1 - 1e-12 && (!best || c > best.c)) best = { d, c, plane: planeRefs.includes(d) }; }
+    for (const d of refs) { const c = Math.abs(dot(a, d)); if (c > Math.cos(1.5 * RAD) && !(a[0] === d[0] && a[1] === d[1] && a[2] === d[2]) && !(a[0] === -d[0] && a[1] === -d[1] && a[2] === -d[2]) && (!best || c > best.c)) best = { d, c, plane: planeRefs.includes(d) }; }
     if (S.type === 'cylinder' && !(best && best.plane) && !globalThis.process?.env?.NOCONE) {
       // Eje inclinado unos grados respecto a una dirección principal: suele ser un taladro o
       // saliente con ángulo de desmoldeo (cono) que se ajustó como cilindro torcido.
@@ -193,6 +196,19 @@ export function regularize(mesh, seg) {
     let lo = Math.max(1e-3, S.r - 4 * tol), hi = S.r + 4 * tol;
     for (let k = 0; k < 40; k++) { const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3; if (err(m1) < err(m2)) hi = m2; else lo = m1; }
     set(i, make((lo + hi) / 2));
+  }
+
+  // 3c) Redondeos tangentes a sus vecinos coaxiales de perfil recto (conos, cilindros, planos
+  //     perpendiculares), p. ej. la unión suave entre las paredes de un embudo. Un solo parámetro,
+  //     el radio del tubo, ajustado a la malla.
+  if (!globalThis.process?.env?.NOCOAX) for (const i of order) {
+    const S = prims[i].S; if (S.type !== 'torus') continue;
+    const make = filletMaker(S, [...nb[i]].filter(j => live(j)).map(j => prims[j].S).filter(N => N.type === 'cone' || N.type === 'cylinder' || N.type === 'plane'));
+    if (!make) continue;
+    const pts = vertsOf(i), err = r => { const T2 = make(r); return T2 ? pts.reduce((m, p) => Math.max(m, Math.abs(dist(T2, p))), 0) : Infinity; };
+    let lo = Math.max(1e-3, S.r - 4 * tol), hi = S.r + 4 * tol;
+    for (let k = 0; k < 50; k++) { const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3; if (err(m1) < err(m2)) hi = m2; else lo = m1; }
+    const T2 = make((lo + hi) / 2); if (T2) set(i, T2);
   }
 
   // 4) Cilindros de redondeo tangentes a planos paralelos a su eje: distancia eje-plano = r.
