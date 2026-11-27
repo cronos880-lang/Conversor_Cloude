@@ -36,6 +36,28 @@ function looseRegions(brep, prims, limit, regionArea = null) {
   return out;
 }
 
+/**
+ * Toros que no son redondeos reales: el tubo es mucho mayor que la propia zona (ajustes de
+ * superficies libres casi planas). Parasolid interpreta mal estas caras (llega a tomar el toro
+ * entero), así que esas zonas pasan a facetas exactas.
+ */
+function oddTori(mesh, seg) {
+  const { reg, prims } = seg, out = new Set(), lo = new Map(), hi = new Map();
+  for (let t = 0; t < mesh.nt; t++) {
+    const r = reg[t]; if (prims[r].S.type !== 'torus' || prims[r].facet) continue;
+    let a = lo.get(r), b = hi.get(r); if (!a) { lo.set(r, a = [Infinity, Infinity, Infinity]); hi.set(r, b = [-Infinity, -Infinity, -Infinity]); }
+    for (let k = 0; k < 3; k++) { const v = mesh.T[t * 3 + k]; for (let i = 0; i < 3; i++) { const x = mesh.V[v * 3 + i]; if (x < a[i]) a[i] = x; if (x > b[i]) b[i] = x; } }
+  }
+  const g0 = [Infinity, Infinity, Infinity], g1 = [-Infinity, -Infinity, -Infinity];
+  for (let v = 0; v < mesh.nv; v++) for (let i = 0; i < 3; i++) { const x = mesh.V[v * 3 + i]; if (x < g0[i]) g0[i] = x; if (x > g1[i]) g1[i] = x; }
+  const diag = Math.hypot(g1[0] - g0[0], g1[1] - g0[1], g1[2] - g0[2]);
+  for (const [r, a] of lo) {
+    const b = hi.get(r), size = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]), S = prims[r].S;
+    if ((S.r > 4 * size && S.R > 4 * size) || S.r > 0.3 * diag) out.add(r);
+  }
+  return out;
+}
+
 function prepare(positions, scale, onStatus, tolFactor = 1) {
   onStatus('Analizando la malla…');
   let mesh = buildMesh(positions, scale);
@@ -56,6 +78,7 @@ function prepare(positions, scale, onStatus, tolFactor = 1) {
   findExtrusions(mesh, seg);
   mergeSameSurfaces(mesh, seg);
   if (!globalThis.process?.env?.NOREG) regularize(mesh, seg);
+  if (!globalThis.process?.env?.NOODDTORUS) { const odd = oddTori(mesh, seg); if (odd.size) demote(mesh, seg, odd); }
   return { mesh, comp, seg };
 }
 

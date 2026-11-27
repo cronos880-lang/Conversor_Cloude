@@ -95,7 +95,8 @@ export function validate(oc, stepText, brep, regionArea) {
     for (const [region, e] of byRegion) {
       const want = regionArea[region];
       if (e.seen && (e.area < 0 || e.area > 2.5 * want + slack)) (result.gross = result.gross || new Set()).add(region);
-      if (!e.seen || Math.abs(e.area - want) > 0.2 * want + slack) { result.bad.add(region); if (!result.reason.has(region)) result.reason.set(region, 'area'); (result.why = result.why || []).push([region, e.seen, +want.toFixed(4), +e.area.toFixed(4)]); }
+      // Área negativa: la cara se lee al revés (Onshape la interpreta como su complemento).
+      if (!e.seen || e.area < -1e-9 || Math.abs(e.area - want) > 0.2 * want + slack) { result.bad.add(region); if (!result.reason.has(region)) result.reason.set(region, 'area'); (result.why = result.why || []).push([region, e.seen, +want.toFixed(4), +e.area.toFixed(4)]); }
     }
     result.unmatched = unmatched.length;
     return result;
