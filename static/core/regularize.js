@@ -126,7 +126,7 @@ export function regularize(mesh, seg) {
     const i = rev[x], j = rev[y], Si = prims[i].S, Sj = prims[j].S;
     if (Math.abs(dot(Si.a, Sj.a)) < 1 - 1e-9) continue;
     const oi = originOf(Si), oj = originOf(Sj), off = lineDist(oj, oi, Si.a);
-    if (off < 1e-9 || off > 2 * tol) continue;
+    if (off < 1e-9 || off > 3 * tol) continue;
     // Llevar el eje de la menor (j) al de la mayor (i).
     const v = sub(oj, oi), on = add(oi, mul(Si.a, dot(v, Si.a)));
     const S2 = { ...Sj }; if (Sj.type === 'cylinder') S2.p = on; else if (Sj.type === 'cone') S2.apex = add(on, sub(Sj.apex, oj)); else S2.c = on;

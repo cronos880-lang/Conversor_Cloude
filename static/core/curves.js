@@ -143,7 +143,7 @@ function circleOn(C, pts, closed, lim, back = 0) {
     while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
     if (d === 0) return null;
     widest = Math.max(widest, Math.abs(d));
-    // En contactos tangentes la cadena de la malla puede retroceder un poco en ángulo.
+    // La cadena de la malla puede retroceder un poco en ángulo (contactos tangentes, contornos dentados).
     if (Math.abs(d) <= back) { total += d; continue; }
     if (sign === 0) sign = Math.sign(d); else if (Math.sign(d) !== sign) return null;
     total += d;
@@ -258,7 +258,7 @@ export function exactCurve(pts, closed, A, B, tol, tangentOnly = false) {
     if (tangentOnly && !C.tangent) continue;
     const offC = p => { const v = sub(p, C.c), h = dot(v, C.a); return Math.hypot(h, norm(sub(v, mul(C.a, h))) - C.r); };
     if (offC(pts[0]) > 0.02 * tol || offC(pts[pts.length - 1]) > 0.02 * tol) continue;
-    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol, C.tangent ? 0.08 : 0);
+    const c = circleOn(C, pts, closed, C.tangent ? Math.max(3 * tol, 2 * Math.sqrt(2 * C.tangent * tol)) : 3 * tol, 0.1);
     if (c && (closed || pts.length > 2 || c.sweep > 0.02)) return { curve: c, dev: 0, ok: true };
   }
   return null;
