@@ -205,12 +205,16 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
     if (!progress) break;
   }
   let fallbackGood = null;
-  // Si casi toda la pieza quedó en facetas, las pocas caras curvas restantes dejan
-  // holguras en sus bordes que Onshape marca como defectos: mejor todo en facetas exactas.
+  // Red de seguridad para piezas de formas libres: si una parte importante de la superficie
+  // quedó sin reconocer (más del 15 %), la mezcla de caras reconocidas y zonas planas es la que
+  // Onshape (Parasolid) importa mal; mejor todo en facetas exactas, correcto aunque no editable.
+  // Las piezas mecánicas de prueba no pasan del 7 %.
+  const FREEFORM = Number(globalThis.process?.env?.FREEFORM) || 0.15;
+  let freeform = false;
   if (good) {
     let facetArea = 0; for (let t = 0; t < mesh.nt; t++) if (seg.prims[seg.reg[t]].facet) facetArea += mesh.A[t];
     const curved = good.brep.faces.filter(f => f.loops.length && f.S.type !== 'plane').length;
-    if (curved && facetArea > 0.8 * mesh.area) { fallbackGood = good; good = null; onStatus('Demasiadas zonas sin reconocer: usando caras planas exactas…'); }
+    if (curved && facetArea > FREEFORM * mesh.area) { fallbackGood = good; good = null; freeform = true; onStatus('Pieza con formas libres: usando caras planas exactas…'); }
   }
   if (!good) {
     // Último recurso: todo el sólido con facetas planas (como una conversión facetada clásica).
@@ -230,6 +234,7 @@ async function attempt(positions, engine, { scale = 1, name = 'pieza', onStatus 
   if (!good) throw new Error('No se pudo obtener un sólido válido a partir de este STL.');
   const last = good; rounds = good.rounds;
   last.report.rounds = rounds; last.report.demoted = demoted;
+  if (freeform && last !== fallbackGood) last.report.freeform = true;
   if (mesh.repairs) last.report.repairs = mesh.repairs;
   last.report.checkedVolume = last.check.volume;
   // STEP final escrito por el motor CAD (curvas de parámetros y costuras para otros CAD).

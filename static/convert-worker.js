@@ -12,7 +12,8 @@ function summary(report) {
   const parts = Object.keys(NAMES).filter(k => report.types[k]).map(k => `${report.types[k]} ${NAMES[k][report.types[k] === 1 ? 0 : 1]}`);
   let text = `${report.triangles.toLocaleString('es-ES')} triángulos → ${report.faces.toLocaleString('es-ES')} caras (${parts.join(', ')}).`;
   if (report.repairs) text += ' Se reparó la malla antes de convertir.';
-  if (report.demoted) text += ' Algunas zonas se dejaron con caras planas.';
+  if (report.freeform) text += ' Pieza con formas libres: se ha convertido con caras planas exactas (correcta, pero no editable como superficies).';
+  else if (report.demoted) text += ' Algunas zonas se dejaron con caras planas.';
   return text;
 }
 
