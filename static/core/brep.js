@@ -101,7 +101,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     return false;
   };
   // Puntos de la cadena que quedan detrás de su extremo (respecto a la dirección del borde).
-  const trimBehind = (pts, SA, SB) => {
+  const trimBehind = (pts, SA, SB, atStart = true, atEnd = true) => {
+    if (!atStart && !atEnd) return pts;
     const dirAt = (p, toward) => {
       let t = crossV(normalAt(SA, p), normalAt(SB, p)); const l = normV(t);
       const c = [toward[0] - p[0], toward[1] - p[1], toward[2] - p[2]];
@@ -114,8 +115,8 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     let i = 1, j = n - 2;
     const ahead = (p, o, t) => (p[0] - o[0]) * t[0] + (p[1] - o[1]) * t[1] + (p[2] - o[2]) * t[2] > 0;
     const near = (p, o) => Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]) <= 1;
-    while (i < j && near(pts[i], pts[0]) && !ahead(pts[i], pts[0], t0)) i++;
-    while (j > i && near(pts[j], pts[n - 1]) && !ahead(pts[j], pts[n - 1], t1)) j--;
+    while (atStart && i < j && near(pts[i], pts[0]) && !ahead(pts[i], pts[0], t0)) i++;
+    while (atEnd && j > i && near(pts[j], pts[n - 1]) && !ahead(pts[j], pts[n - 1], t1)) j--;
     if (i === 1 && j === n - 2) return pts;
     return [pts[0], ...pts.slice(i, j + 1), pts[n - 1]];
   };
@@ -159,7 +160,10 @@ export function buildBrep(mesh, seg, comp, options = {}) {
     pts = thin(pts, 1e-9);
     // Si una esquina se movió a la intersección exacta, los primeros (o últimos) puntos de la
     // malla pueden quedar por detrás de ella: se descartan para que el borde no retroceda.
-    if (!closed && pts.length > 3 && !prims[A].facet && !prims[B].facet && !globalThis.process?.env?.NOTRIM) pts = trimBehind(pts, SA, SB);
+    if (!closed && pts.length > 3 && !prims[A].facet && !prims[B].facet && !globalThis.process?.env?.NOTRIM) {
+      const far = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) > 2 * tol;
+      pts = trimBehind(pts, SA, SB, far(pts[0], P(vs[0])), far(pts[pts.length - 1], P(vs[vs.length - 1])));
+    }
     let fit = null;
     // En caras degradadas a contorno poligonal se conservan los contactos tangentes exactos (vuelta completa).
     if (polyFaces.has(A) || polyFaces.has(B)) { if (closed && !prims[A].facet && !prims[B].facet && !globalThis.process?.env?.NOKEEPEXACT) fit = exactCurve(pts, closed, SA, SB, tol, true); }

@@ -34,8 +34,20 @@ export function exactFacetJoins(mesh, seg, maxMoveFactor = 3) {
     const p = P(v), q = snapPoint(p, surf, maxMoveFactor * tol);
     if (q !== p && norm(sub(q, p)) > 1e-12) moved.set(v, q);
   }
-  // 3) Plano de cada triángulo de faceta aislado a partir de sus vértices (movidos o no).
+  // Salvaguarda: ningún triángulo puede darse la vuelta ni quedar casi aplastado; si ocurre, sus
+  // vértices se quedan donde estaban (se repite porque deshacer uno afecta a sus vecinos).
   const at = v => moved.get(v) || P(v);
+  for (let pass = 0; pass < 6; pass++) {
+    let undone = 0;
+    for (let t = 0; t < nt; t++) {
+      const vs = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]]; if (!vs.some(v => moved.has(v))) continue;
+      const [a0, b0, c0] = vs.map(P), [a1, b1, c1] = vs.map(at);
+      const n0 = cross(sub(b0, a0), sub(c0, a0)), n1 = cross(sub(b1, a1), sub(c1, a1)), l0 = norm(n0), l1 = norm(n1);
+      if (l0 > 0 && (l1 < 0.25 * l0 || dot(n0, n1) < 0.9 * l0 * l1)) { for (const v of vs) if (moved.delete(v)) undone++; }
+    }
+    if (!undone) break;
+  }
+  // 3) Plano de cada triángulo de faceta aislado a partir de sus vértices (movidos o no).
   for (let t = 0; t < nt; t++) {
     const r = reg[t]; if (!prims[r].isolated) continue;
     const [a, b, c] = [0, 1, 2].map(k => at(T[t * 3 + k])), n0 = cross(sub(b, a), sub(c, a)), l = norm(n0);
