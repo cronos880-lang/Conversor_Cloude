@@ -39,15 +39,15 @@ SCRIPT = '''function(context is Context, queries) {
   var tipos = {};
   var caras = [];
   for (var f in evaluateQuery(context, qOwnedByBody(solids, EntityType.FACE))) {
-    var k = toString(evSurfaceDefinition(context, { "face" : f }).surfaceType);
+    var k = try silent(toString(evSurfaceDefinition(context, { "face" : f }).surfaceType)); if (k == undefined) k = "ERROR";
     tipos[k] = (tipos[k] == undefined ? 0 : tipos[k]) + 1;
     if (%s) {
-      var c = evApproximateCentroid(context, { "entities" : f });
-      caras = append(caras, [k, evArea(context, { "entities" : f }) / (millimeter ^ 2), c[0] / millimeter, c[1] / millimeter, c[2] / millimeter]);
+      var c = try silent(evApproximateCentroid(context, { "entities" : f })); var ar = try silent(evArea(context, { "entities" : f }) / (millimeter ^ 2));
+      caras = append(caras, [k, ar, c == undefined ? undefined : c[0] / millimeter, c == undefined ? undefined : c[1] / millimeter, c == undefined ? undefined : c[2] / millimeter]);
     }
   }
   var vol = 0;
-  for (var b in evaluateQuery(context, solids)) { vol += evVolume(context, { "entities" : b }) / (millimeter ^ 3); }
+  for (var b in evaluateQuery(context, solids)) { var vb = try silent(evVolume(context, { "entities" : b }) / (millimeter ^ 3)); if (vb != undefined) vol += vb; }
   return { "estado" : toString(st.statusType), "motivo" : toString(st.statusEnum), "solidos" : size(evaluateQuery(context, solids)), "volumen" : vol, "caras_detalle" : caras,
            "superficies" : size(evaluateQuery(context, qBodyType(qEverything(EntityType.BODY), BodyType.SHEET))), "tipos" : tipos };
 }'''
